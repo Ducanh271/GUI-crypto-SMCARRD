@@ -188,4 +188,49 @@ public class Database {
         }
         return null;
     }
+
+    public static boolean updateMemberInfoByCardCode(
+            String cardCode,
+            String fullName,
+            String dob,
+            String gender,
+            String phone
+    ) {
+        // CT00005 -> 5
+        int id;
+        try {
+            if (cardCode.startsWith("CT")) {
+                id = Integer.parseInt(cardCode.substring(2));
+            } else {
+                id = Integer.parseInt(cardCode);
+            }
+        } catch (Exception e) {
+            System.out.println("Không parse được cardCode: " + cardCode);
+            return false;
+        }
+
+        String sql = """
+        UPDATE members
+        SET full_name = ?, dob = ?, gender = ?, phone = ?
+        WHERE id = ?
+    """;
+
+        try (Connection conn = connect();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setString(1, fullName);
+            ps.setString(2, dob);
+            ps.setString(3, gender);
+            ps.setString(4, phone);
+            ps.setInt(5, id);
+
+            ps.executeUpdate();
+            return true;
+
+        } catch (SQLException e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
 }

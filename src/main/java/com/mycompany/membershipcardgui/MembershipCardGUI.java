@@ -5,6 +5,7 @@ import javax.crypto.spec.SecretKeySpec;
 import javax.imageio.ImageIO;
 import javax.smartcardio.*;
 import javax.swing.*;
+import javax.swing.border.Border;
 import java.awt.*;
 import java.awt.event.*;
 import java.awt.image.BufferedImage;
@@ -21,6 +22,12 @@ import java.util.List;
 import java.sql.Connection; // Cho transaction
 import java.sql.SQLException;
 import com.formdev.flatlaf.FlatLightLaf;
+import com.github.lgooddatepicker.components.DatePicker;
+import com.github.lgooddatepicker.components.DatePickerSettings;
+import com.github.lgooddatepicker.components.CalendarPanel;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+
 
 public class MembershipCardGUI extends JFrame {
 
@@ -80,6 +87,16 @@ public class MembershipCardGUI extends JFrame {
         Product(String n, long p) { name = n; price = p; }
     }
 
+    private static class CartItem {
+        Product product;
+        int quantity;
+
+        CartItem(Product p, int q) {
+            this.product = p;
+            this.quantity = q;
+        }
+    }
+
     private static class TierPack {
         String name;
         int tier;
@@ -93,7 +110,13 @@ public class MembershipCardGUI extends JFrame {
             new Product("Thắt lưng", 300_000L),
             new Product("Mũ", 400_000L),
             new Product("Găng tay", 200_000L),
-            new Product("Giày sneaker", 1_500_000L)
+            new Product("Giày sneaker", 1_500_000L),
+
+            // ===== SẢN PHẨM MỚI =====
+            new Product("Áo khoác", 800_000L),
+            new Product("Ba lô", 650_000L),
+            new Product("Ví da", 450_000L),
+            new Product("Kính mát", 350_000L)
     };
 
     private TierPack[] tierPacks = new TierPack[]{
@@ -198,8 +221,75 @@ public class MembershipCardGUI extends JFrame {
         return lb;
     }
 
+    // ================== DATE PICKER (MATERIAL STYLE) ==================
+    private DatePicker createDatePicker(String initialDate) {
+
+        // ===== SETTINGS (AN TOÀN BẢN CŨ) =====
+        DatePickerSettings settings = new DatePickerSettings();
+
+        settings.setFormatForDatesCommonEra("dd/MM/yyyy");
+        settings.setAllowEmptyDates(false);
+
+        settings.setFontValidDate(new Font("Segoe UI", Font.PLAIN, 13));
+        settings.setFontInvalidDate(new Font("Segoe UI", Font.PLAIN, 13));
+        settings.setFontCalendarDateLabels(new Font("Segoe UI", Font.PLAIN, 12));
+        settings.setFontCalendarWeekdayLabels(new Font("Segoe UI", Font.PLAIN, 12));
+
+        // ===== DATE PICKER =====
+        DatePicker datePicker = new DatePicker(settings);
+        datePicker.setPreferredSize(new Dimension(200, 28));
+
+        // ===== LÀM ĐẸP TEXT FIELD =====
+        JTextField tf = datePicker.getComponentDateTextField();
+
+        tf.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        tf.setBackground(Color.WHITE);
+        tf.setForeground(new Color(44, 44, 44));
+        tf.setCaretColor(new Color(106, 76, 147)); // tím chủ đạo
+        tf.setSelectionColor(new Color(210, 195, 230));
+        tf.setSelectedTextColor(Color.BLACK);
+
+        // Border hiện đại
+        Border normalBorder = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(210, 210, 210), 1),
+                BorderFactory.createEmptyBorder(5, 8, 5, 8)
+        );
+
+        Border focusBorder = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(106, 76, 147), 2),
+                BorderFactory.createEmptyBorder(4, 7, 4, 7)
+        );
+
+        tf.setBorder(normalBorder);
+
+        // ===== HIỆU ỨNG FOCUS (RẤT QUAN TRỌNG CHO UI MODERN) =====
+        tf.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+                tf.setBorder(focusBorder);
+            }
+
+            @Override
+            public void focusLost(FocusEvent e) {
+                tf.setBorder(normalBorder);
+            }
+        });
+
+        // ===== SET NGÀY BAN ĐẦU =====
+        if (initialDate != null && !initialDate.trim().isEmpty()) {
+            try {
+                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+                datePicker.setDate(LocalDate.parse(initialDate.trim(), formatter));
+            } catch (Exception ignored) {
+            }
+        }
+
+        return datePicker;
+    }
+
     // ================== CONSTRUCTOR – GIAO DIỆN NGOÀI ==================
     public MembershipCardGUI() {
+        Database.createNewTable();
         frame = new JFrame("Hệ Thống Quản Lý Thẻ Thành Viên");
         frame.setSize(1200, 700);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -434,9 +524,21 @@ public class MembershipCardGUI extends JFrame {
         readCardButton.addActionListener(e -> readCard());
 
         editButton.addActionListener(e -> {
-            Window window = SwingUtilities.getWindowAncestor(infoPanel);
-            if (window != null) window.dispose();
-            changeInfo();
+            try {
+                // Nếu chưa đọc thẻ thì đọc trước
+                if (getName == null || getDob == null || getPhone == null || getGender == null) {
+                    readCard();   // verify PIN + đọc dữ liệu
+                    return;
+                }
+
+                Window window = SwingUtilities.getWindowAncestor(infoPanel);
+                if (window != null) window.dispose();
+
+                changeInfo();
+            } catch (Exception ex) {
+                responseField.setText("Lỗi: " + ex.getMessage());
+                JOptionPane.showMessageDialog(null, "Lỗi: " + ex.getMessage(), "Lỗi", JOptionPane.ERROR_MESSAGE);
+            }
         });
 
         changePinButton.addActionListener(e -> {
@@ -770,17 +872,18 @@ public class MembershipCardGUI extends JFrame {
             rightPanel.add(nameField, gbc);
             row++;
 
-            // Ngày sinh
+            // Ngày sinh (DatePicker)
             gbc.gridx = 0;
             gbc.gridy = row;
             gbc.weightx = 0;
             gbc.fill = 0;
-            rightPanel.add(createLabel("Ngày Sinh (dd/MM/yyyy):"), gbc);
-            dobField = new JTextField();
+            rightPanel.add(createLabel("Ngày Sinh:"), gbc);
+
+            DatePicker dobPicker = createDatePicker(null);
             gbc.gridx = 1;
             gbc.fill = GridBagConstraints.HORIZONTAL;
             gbc.weightx = 1.0;
-            rightPanel.add(dobField, gbc);
+            rightPanel.add(dobPicker, gbc);
             row++;
 
             // Giới tính
@@ -821,7 +924,13 @@ public class MembershipCardGUI extends JFrame {
             }
             // LẤY DỮ LIỆU TỪ FORM
             String name = nameField.getText().trim();
-            String dob = dobField.getText().trim();
+            if (dobPicker.getDate() == null) {
+                JOptionPane.showMessageDialog(null, "Vui lòng chọn ngày sinh!", "Lỗi", JOptionPane.ERROR_MESSAGE);
+                continue;
+            }
+
+            String dob = dobPicker.getDate()
+                    .format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
             String gender = (String) genderComboBox.getSelectedItem();
             String pin = new String(pinField.getPassword()).trim();
             String phone = phoneField.getText().trim();
@@ -1111,6 +1220,23 @@ public class MembershipCardGUI extends JFrame {
                 String rawData = new String(data, 0, realLen, StandardCharsets.UTF_8);
                 String[] fields = rawData.split("\\|");
 
+                // ===== SYNC DATABASE SAU KHI ĐỌC TỪ THẺ =====
+                try {
+                    boolean ok = Database.updateMemberInfoByCardCode(
+                            fields[0], // maKH (CT000xx)
+                            fields[1], // full_name
+                            fields[2], // dob
+                            fields[3], // gender
+                            fields[4]  // phone
+                    );
+
+                    if (!ok) {
+                        System.out.println("⚠ Không cập nhật được DB cho " + fields[0]);
+                    }
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+
                 // MUST HAVE 6 FIELDS
                 if (fields.length >= 6) {
 
@@ -1236,6 +1362,18 @@ public class MembershipCardGUI extends JFrame {
             String newPin = new String(newPinField.getPassword()).trim();
             String confirmPin = new String(confirmPinField.getPassword()).trim();
 
+            // ❌ KHÔNG CHO PIN MỚI TRÙNG PIN CŨ
+            if (newPin.equals(oldPin)) {
+                JOptionPane.showMessageDialog(
+                        null,
+                        "Mã PIN mới không được trùng với mã PIN cũ!",
+                        "Lỗi đổi mã PIN",
+                        JOptionPane.ERROR_MESSAGE
+                );
+                continue; // quay lại form nhập PIN
+            }
+
+
             if (!oldPin.matches("\\d{6}")) {
                 JOptionPane.showMessageDialog(null, "Mã PIN cũ phải là 6 chữ số!", "Lỗi", JOptionPane.ERROR_MESSAGE);
                 continue;
@@ -1283,6 +1421,7 @@ public class MembershipCardGUI extends JFrame {
         }
 
         while (true) {
+            final byte[][] newAvatarDataHolder = new byte[1][];
             JPanel panel = new JPanel(new GridBagLayout());
             panel.setBackground(LIGHT_BG);
 
@@ -1292,6 +1431,78 @@ public class MembershipCardGUI extends JFrame {
 
             int row = 0;
 
+            // ================= ẢNH ĐẠI DIỆN (TRÊN CÙNG – 2 CỘT) =================
+            gbc.gridx = 0;
+            gbc.gridy = row;
+            gbc.gridwidth = 2;
+            gbc.anchor = GridBagConstraints.CENTER;
+
+            JLabel avatarPreview = new JLabel();
+            avatarPreview.setPreferredSize(new Dimension(150, 180));
+            avatarPreview.setHorizontalAlignment(SwingConstants.CENTER);
+            avatarPreview.setBorder(BorderFactory.createLineBorder(new Color(200,200,200)));
+
+            // ===== LOAD ẢNH CŨ TỪ THẺ =====
+            try {
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                boolean first = true;
+
+                while (true) {
+                    byte p1 = first ? (byte)0x00 : (byte)0x01;
+                    CommandAPDU cmd = new CommandAPDU(0x00, 0x09, p1, 0x00);
+                    ResponseAPDU resp = channel.transmit(cmd);
+
+                    if (resp.getSW() != 0x9000 || resp.getData().length == 0) break;
+                    bos.write(resp.getData());
+                    first = false;
+                }
+
+                byte[] raw = bos.toByteArray();
+                if (raw.length > 0) {
+                    int len = raw.length;
+                    while (len > 0 && raw[len - 1] == 0x00) len--;
+                    byte[] img = Arrays.copyOf(raw, len);
+
+                    ImageIcon icon = new ImageIcon(img);
+                    if (icon.getIconWidth() > 0) {
+                        Image scaled = icon.getImage().getScaledInstance(150, 180, Image.SCALE_SMOOTH);
+                        avatarPreview.setIcon(new ImageIcon(scaled));
+                    }
+                }
+            } catch (Exception ignore) {}
+
+
+            JButton chooseAvatarBtn = new JButton("Chọn ảnh mới");
+            chooseAvatarBtn.setBackground(ACCENT_PURPLE);
+            chooseAvatarBtn.setForeground(Color.WHITE);
+
+            chooseAvatarBtn.addActionListener(ev -> {
+                try {
+                    byte[] imgBytes = chooseAndReadFile();
+                    if (imgBytes != null) {
+                        newAvatarDataHolder[0] = imgBytes;
+
+                        ImageIcon icon = new ImageIcon(imgBytes);
+                        Image scaled = icon.getImage().getScaledInstance(150, 180, Image.SCALE_SMOOTH);
+                        avatarPreview.setIcon(new ImageIcon(scaled));
+                        avatarPreview.setText("");
+                    }
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(this, "Lỗi chọn ảnh: " + ex.getMessage());
+                }
+            });
+
+            JPanel avatarPanel = new JPanel(new BorderLayout(5,5));
+            avatarPanel.setBackground(LIGHT_BG);
+            avatarPanel.add(avatarPreview, BorderLayout.CENTER);
+            avatarPanel.add(chooseAvatarBtn, BorderLayout.SOUTH);
+
+            panel.add(avatarPanel, gbc);
+
+            row++;               // xuống dòng
+            gbc.gridwidth = 1;   // RESET gridwidth
+            gbc.anchor = GridBagConstraints.WEST;
+
             // Họ tên
             gbc.gridx = 0; gbc.gridy = row;
             panel.add(createLabel("Họ và Tên:"), gbc);
@@ -1300,12 +1511,15 @@ public class MembershipCardGUI extends JFrame {
             panel.add(nameFieldNew, gbc);
             row++;
 
-            // Ngày sinh
-            gbc.gridx = 0; gbc.gridy = row; gbc.fill = 0; gbc.weightx = 0;
-            panel.add(createLabel("Ngày Sinh (dd/MM/yyyy):"), gbc);
-            JTextField dobFieldNew = new JTextField(getDob.getText());
-            gbc.gridx = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
-            panel.add(dobFieldNew, gbc);
+            // Ngày sinh (DatePicker)
+            gbc.gridx = 0; gbc.gridy = row;
+            panel.add(createLabel("Ngày Sinh:"), gbc);
+
+            DatePicker dobPickerNew = createDatePicker(getDob.getText());
+            gbc.gridx = 1;
+            gbc.fill = GridBagConstraints.HORIZONTAL;
+            gbc.weightx = 1.0;
+            panel.add(dobPickerNew, gbc);
             row++;
 
             // Số Điện Thoại
@@ -1324,6 +1538,8 @@ public class MembershipCardGUI extends JFrame {
             gbc.gridx = 1; gbc.fill = GridBagConstraints.HORIZONTAL;
             panel.add(genderComboBoxNew, gbc);
 
+            row++; // xuống dòng mới
+
             // Show popup
             int option = JOptionPane.showConfirmDialog(
                     null, panel, "Thay đổi thông tin",
@@ -1337,7 +1553,13 @@ public class MembershipCardGUI extends JFrame {
 
             // Validate
             String name = nameFieldNew.getText().trim();
-            String dob = dobFieldNew.getText().trim();
+            if (dobPickerNew.getDate() == null) {
+                JOptionPane.showMessageDialog(null, "Vui lòng chọn ngày sinh!", "Lỗi", JOptionPane.ERROR_MESSAGE);
+                continue;
+            }
+
+            String dob = dobPickerNew.getDate()
+                    .format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
             String phone = phoneFieldNew.getText().trim();
             String gender = (String) genderComboBoxNew.getSelectedItem();
             if (!isValidName(name)) {
@@ -1360,19 +1582,29 @@ public class MembershipCardGUI extends JFrame {
 
             try {
                 // CHUẨN: gửi 4 trường: Hoten|NgaySinh|SoDienThoai|GioiTinh
-                String changeInfoData = name + "|" + dob + "|" + phone + "|" + gender;
+                String changeInfoData = name + "|" + dob + "|" + gender + "|" + phone;
                 byte[] dataBytes = changeInfoData.getBytes(StandardCharsets.UTF_8);
 
                 CommandAPDU changeInfoCommand = new CommandAPDU(0x00, 0x05, 0x00, 0x00, dataBytes);
                 ResponseAPDU response = channel.transmit(changeInfoCommand);
 
                 if (response.getSW() == 0x9000) {
-                    responseField.setText("Thông tin đã được thay đổi thành công.");
-                    JOptionPane.showMessageDialog(null, "Thông tin đã được thay đổi thành công.", "Thành công", JOptionPane.INFORMATION_MESSAGE);
 
-                    readCardData();
+                    // ====== NẾU CÓ ẢNH MỚI -> UPLOAD LÊN THẺ ======
+                    if (newAvatarDataHolder[0] != null) {
+                        sendImageData(newAvatarDataHolder[0]); // INS 0x08 theo applet
+                    }
+
+                    responseField.setText("Cập nhật thành công (bao gồm ảnh nếu có).");
+                    JOptionPane.showMessageDialog(null,
+                            "Cập nhật thành công!",
+                            "Thành công",
+                            JOptionPane.INFORMATION_MESSAGE);
+
+                    readCard(); // đọc lại để cập nhật UI
                     return;
-                } else {
+                }
+                else {
                     JOptionPane.showMessageDialog(null,
                             "Lỗi khi thay đổi thông tin. SW=" + Integer.toHexString(response.getSW()),
                             "Lỗi", JOptionPane.ERROR_MESSAGE);
@@ -1596,61 +1828,6 @@ public class MembershipCardGUI extends JFrame {
             JOptionPane.showMessageDialog(this, "Lỗi thẻ: " + ex.getMessage(), "Lỗi", JOptionPane.ERROR_MESSAGE);
         }
     }
-//    private void topUpMoney() {
-//        if (!isConnected || channel == null) {
-//            responseField.setText("Bạn phải kết nối với thẻ trước!");
-//            return;
-//        }
-//
-//        JPanel panel = new JPanel(new GridBagLayout());
-//        panel.setBackground(LIGHT_BG);
-//        GridBagConstraints gbc = new GridBagConstraints();
-//        gbc.insets = new Insets(5,5,5,5);
-//        gbc.anchor = GridBagConstraints.WEST;
-//
-//        gbc.gridx=0; gbc.gridy=0;
-//        panel.add(createLabel("Nhập số tiền nạp (VNĐ):"), gbc);
-//
-//        JTextField inputField = new JTextField();
-//        gbc.gridx=1; gbc.fill=GridBagConstraints.HORIZONTAL; gbc.weightx=1.0;
-//        panel.add(inputField, gbc);
-//
-//        int opt = JOptionPane.showConfirmDialog(this, panel, "Nạp tiền", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-//        if (opt != JOptionPane.OK_OPTION) {
-//            responseField.setText("Đã hủy nạp tiền.");
-//            return;
-//        }
-//
-//        String input = inputField.getText();
-//        if (input == null) {
-//            responseField.setText("Đã hủy nạp tiền.");
-//            return;
-//        }
-//
-//        input = input.trim();
-//        if (input.isEmpty()) {
-//            JOptionPane.showMessageDialog(this, "Số tiền không hợp lệ!", "Lỗi", JOptionPane.ERROR_MESSAGE);
-//            return;
-//        }
-//
-//        try {
-//            long amount = Long.parseLong(input);
-//            if (amount <= 0) {
-//                JOptionPane.showMessageDialog(this, "Số tiền phải > 0!", "Lỗi", JOptionPane.ERROR_MESSAGE);
-//                return;
-//            }
-//
-//            long current = getBalanceFromCard();
-//            long updated = current + amount;
-//            setBalanceToCard(updated);
-//
-//            responseField.setText("Nạp tiền thành công. Số dư mới: " + updated + " VNĐ");
-//        } catch (NumberFormatException ex) {
-//            JOptionPane.showMessageDialog(this, "Số tiền không hợp lệ!", "Lỗi", JOptionPane.ERROR_MESSAGE);
-//        } catch (CardException ex) {
-//            JOptionPane.showMessageDialog(this, "Lỗi thẻ: " + ex.getMessage(), "Lỗi", JOptionPane.ERROR_MESSAGE);
-//        }
-//    }
 
     // ================== CỬA HÀNG ==================
     // ==== CỬA HÀNG DẠNG Ô VUÔNG NHIỀU MÀU ====
@@ -1684,30 +1861,37 @@ public class MembershipCardGUI extends JFrame {
                 new Color(41,128,185)   // Giày
         };
 
-        final JPanel[] cards = new JPanel[products.length];
-        final int[] selectedIndex = {-1};
+        Map<Product, JSpinner> spinnerMap = new LinkedHashMap<>();
 
         for (int i = 0; i < products.length; i++) {
             Product p = products[i];
-            String titleText = p.name;
-            String priceText = formatPrice(p.price);
 
-            JPanel card = createSelectCard(titleText, priceText, colors[i % colors.length]);
-            int index = i;
+            JPanel card = new JPanel(new BorderLayout(5,5));
+            card.setBackground(colors[i % colors.length]);
+            card.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
 
-            card.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            card.addMouseListener(new java.awt.event.MouseAdapter() {
-                @Override
-                public void mouseClicked(java.awt.event.MouseEvent e) {
-                    // cập nhật chọn
-                    selectedIndex[0] = index;
-                    for (int j = 0; j < cards.length; j++) {
-                        setCardSelected(cards[j], j == index);
-                    }
-                }
-            });
+            JLabel nameLabel = new JLabel(p.name);
+            nameLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
+            nameLabel.setForeground(Color.WHITE);
 
-            cards[i] = card;
+            JLabel priceLabel = new JLabel(formatPrice(p.price));
+            priceLabel.setForeground(Color.WHITE);
+
+            // Spinner số lượng
+            JSpinner qtySpinner = new JSpinner(new SpinnerNumberModel(0, 0, 99, 1));
+            qtySpinner.setPreferredSize(new Dimension(60, 25));
+
+            spinnerMap.put(p, qtySpinner);
+
+            JPanel bottom = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+            bottom.setOpaque(false);
+            bottom.add(new JLabel("SL:"));
+            bottom.add(qtySpinner);
+
+            card.add(nameLabel, BorderLayout.NORTH);
+            card.add(priceLabel, BorderLayout.CENTER);
+            card.add(bottom, BorderLayout.SOUTH);
+
             grid.add(card);
         }
 
@@ -1721,13 +1905,25 @@ public class MembershipCardGUI extends JFrame {
                 JOptionPane.PLAIN_MESSAGE
         );
 
-        if (option != JOptionPane.OK_OPTION) {
-            responseField.setText("Đã đóng cửa hàng.");
+        List<CartItem> cart = new ArrayList<>();
+
+        for (Map.Entry<Product, JSpinner> e : spinnerMap.entrySet()) {
+            int qty = (int) e.getValue().getValue();
+            if (qty > 0) {
+                cart.add(new CartItem(e.getKey(), qty));
+            }
+        }
+
+        if (cart.isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                    "Bạn chưa chọn sản phẩm nào!",
+                    "Lỗi",
+                    JOptionPane.ERROR_MESSAGE);
             return;
         }
 
-        if (selectedIndex[0] < 0) {
-            JOptionPane.showMessageDialog(this, "Bạn chưa chọn sản phẩm!", "Lỗi", JOptionPane.ERROR_MESSAGE);
+        if (option != JOptionPane.OK_OPTION) {
+            responseField.setText("Đã đóng cửa hàng.");
             return;
         }
 
@@ -1735,77 +1931,213 @@ public class MembershipCardGUI extends JFrame {
             if (!verifyPin()) {
                 return;
             } else {
-                handlePurchase(products[selectedIndex[0]]);  // GIỮ LOGIC CŨ
+                handlePurchase(cart);
             }
         } catch (CardException ex) {
             JOptionPane.showMessageDialog(this, "Lỗi thẻ: " + ex.getMessage(), "Lỗi", JOptionPane.ERROR_MESSAGE);
         }
     }
 
-    private void handlePurchase(Product p) throws CardException {
+//    private void handlePurchase(List<CartItem> cart) throws CardException {
+//
+//        long balance = getBalanceFromCard();
+//        int tier = getTierFromCard();
+//        int voucherLv = getVoucherLevel();
+//
+//        // ===== TÍNH TỔNG GỐC =====
+//        long totalRaw = 0;
+//        for (CartItem item : cart) {
+//            totalRaw += item.product.price * item.quantity;
+//        }
+//
+//        // ===== GIẢM THEO TIER =====
+//        double tierDiscount = Math.min(tier * 0.05, 0.20);
+//
+//        // ===== GIẢM THEO VOUCHER =====
+//        double voucherDiscount = switch (voucherLv) {
+//            case 1 -> 0.10;
+//            case 2 -> 0.15;
+//            case 3 -> 0.20;
+//            case 4 -> 0.25;
+//            case 5 -> 0.30;
+//            default -> 0.0;
+//        };
+//
+//        double totalDiscount = Math.min(tierDiscount + voucherDiscount, 0.7);
+//        long finalPrice = Math.round(totalRaw * (1.0 - totalDiscount));
+//
+//        // ===== BILL =====
+//        StringBuilder bill = new StringBuilder("Chi tiết mua hàng:\n");
+//
+//        for (CartItem item : cart) {
+//            bill.append("- ")
+//                    .append(item.product.name)
+//                    .append(" x")
+//                    .append(item.quantity)
+//                    .append(" = ")
+//                    .append(formatPrice(item.product.price * item.quantity))
+//                    .append("\n");
+//        }
+//
+//        bill.append("\nTổng gốc: ").append(formatPrice(totalRaw))
+//                .append("\nGiảm giá: ").append((int)(totalDiscount * 100)).append("%")
+//                .append("\nThanh toán: ").append(formatPrice(finalPrice))
+//                .append("\nSố dư hiện tại: ").append(formatPrice(balance))
+//                .append("\n\nXác nhận mua?");
+//
+//        int confirm = JOptionPane.showConfirmDialog(
+//                this,
+//                bill.toString(),
+//                "Xác nhận mua hàng",
+//                JOptionPane.OK_CANCEL_OPTION
+//        );
+//
+//        if (confirm != JOptionPane.OK_OPTION) return;
+//
+//        if (balance < finalPrice) {
+//            JOptionPane.showMessageDialog(this, "Không đủ tiền!", "Lỗi", JOptionPane.ERROR_MESSAGE);
+//            return;
+//        }
+//
+//        // ===== TRỪ TIỀN =====
+//        setBalanceToCard(balance - finalPrice, 0x03);
+//
+//        // ===== +50 ĐIỂM / 1 LẦN MUA =====
+//        int newPoints = getPointsFromCard() + 50;
+//        setPointsToCard(newPoints);
+//
+//        // ===== XÓA VOUCHER =====
+//        if (voucherLv > 0) setVoucherLevel(0);
+//
+//        JOptionPane.showMessageDialog(this, "Mua hàng thành công!", "Thành công", JOptionPane.INFORMATION_MESSAGE);
+//    }
+
+    private void handlePurchase(List<CartItem> cart) throws CardException {
+
         long balance = getBalanceFromCard();
         int tier = getTierFromCard();
         int voucherLv = getVoucherLevel();
 
-        double tierDiscount = tier * 0.05;
-        if (tierDiscount > 0.20) tierDiscount = 0.20;
-
-        double voucherDiscount;
-        switch (voucherLv) {
-            case 1 -> voucherDiscount = 0.10;
-            case 2 -> voucherDiscount = 0.15;
-            case 3 -> voucherDiscount = 0.20;
-            case 4 -> voucherDiscount = 0.25;
-            case 5 -> voucherDiscount = 0.30;
-            default -> voucherDiscount = 0.0;
+        // ===== 1) TÍNH TỔNG GỐC =====
+        long totalRaw = 0;
+        for (CartItem item : cart) {
+            totalRaw += item.product.price * item.quantity;
         }
 
-        double totalDiscount = tierDiscount + voucherDiscount;
-        if (totalDiscount > 0.7) totalDiscount = 0.7;
+        // ===== 2) GIẢM THEO TIER =====
+        double tierDiscount = Math.min(tier * 0.05, 0.20); // 0..20%
+        long afterTierPrice = Math.round(totalRaw * (1.0 - tierDiscount));
 
-        long finalPrice = (long)Math.round(p.price * (1.0 - totalDiscount));
+        // ===== 3) VOUCHER DISCOUNT THEO LEVEL =====
+        double voucherDiscount = switch (voucherLv) {
+            case 1 -> 0.10;
+            case 2 -> 0.15;
+            case 3 -> 0.20;
+            case 4 -> 0.25;
+            case 5 -> 0.30;
+            default -> 0.0;
+        };
+
+        // ===== 4) CHECKBOX: DÙNG VOUCHER HAY KHÔNG =====
+        boolean hasVoucher = voucherLv > 0;
+        JCheckBox useVoucherCheckbox = new JCheckBox(
+                hasVoucher ? ("Dùng voucher hiện có (" + (int)(voucherDiscount * 100) + "%)") : "Không có voucher"
+        );
+        useVoucherCheckbox.setSelected(true);
+        useVoucherCheckbox.setEnabled(hasVoucher);
+
+        // Nếu user không tick -> voucherDiscount = 0 và GIỮ voucher lại
+        boolean willUseVoucher;
+
+        // ===== 5) TÍNH GIÁ CUỐI ĐÚNG NGHIỆP VỤ =====
+        // (Giảm hạng trước) -> (giảm voucher sau)
+        long finalPriceIfUseVoucher = Math.round(afterTierPrice * (1.0 - voucherDiscount));
+        long finalPriceIfNoVoucher  = afterTierPrice;
+
+        // ===== 6) BILL CHI TIẾT =====
+        StringBuilder bill = new StringBuilder("Chi tiết mua hàng:\n");
+        for (CartItem item : cart) {
+            bill.append("- ")
+                    .append(item.product.name)
+                    .append(" x")
+                    .append(item.quantity)
+                    .append(" = ")
+                    .append(formatPrice(item.product.price * item.quantity))
+                    .append("\n");
+        }
+
+        long tierSaved = totalRaw - afterTierPrice;
+        long voucherSaved = finalPriceIfNoVoucher - finalPriceIfUseVoucher;
+
+        bill.append("\nTổng gốc: ").append(formatPrice(totalRaw))
+                .append("\nGiảm theo hạng: ").append((int)(tierDiscount * 100)).append("%")
+                .append(" (tiết kiệm ").append(formatPrice(tierSaved)).append(")")
+                .append("\nGiá sau giảm hạng: ").append(formatPrice(afterTierPrice));
+
+        if (hasVoucher) {
+            bill.append("\nVoucher hiện có: ").append((int)(voucherDiscount * 100)).append("%")
+                    .append(" (nếu dùng tiết kiệm ").append(formatPrice(voucherSaved)).append(")");
+        } else {
+            bill.append("\nVoucher: Không có");
+        }
+
+        bill.append("\nSố dư hiện tại: ").append(formatPrice(balance));
+
+        // Panel confirm đẹp + checkbox
+        JPanel confirmPanel = new JPanel(new BorderLayout(10, 10));
+        JTextArea area = new JTextArea(bill.toString());
+        area.setEditable(false);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+
+        JScrollPane sp = new JScrollPane(area);
+        sp.setPreferredSize(new Dimension(420, 280));
+
+        confirmPanel.add(sp, BorderLayout.CENTER);
+        confirmPanel.add(useVoucherCheckbox, BorderLayout.SOUTH);
 
         int confirm = JOptionPane.showConfirmDialog(
                 this,
-                "Giá gốc: " + formatPrice(p.price) +
-                        "\nGiảm giá: " + (int)(totalDiscount * 100) + "%" +
-                        "\nGiá thanh toán: " + formatPrice(finalPrice) +
-                        "\nSố dư hiện tại: " + formatPrice(balance) +
-                        "\n\nXác nhận mua?",
-                "Xác nhận mua",
+                confirmPanel,
+                "Xác nhận mua hàng",
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.PLAIN_MESSAGE
         );
+        if (confirm != JOptionPane.OK_OPTION) return;
 
-        if (confirm != JOptionPane.OK_OPTION) {
-            responseField.setText("Hủy mua hàng.");
-            return;
-        }
+        willUseVoucher = hasVoucher && useVoucherCheckbox.isSelected();
 
+        long finalPrice = willUseVoucher ? finalPriceIfUseVoucher : finalPriceIfNoVoucher;
+
+        // ===== 7) KIỂM TRA TIỀN =====
         if (balance < finalPrice) {
             JOptionPane.showMessageDialog(this, "Không đủ tiền!", "Lỗi", JOptionPane.ERROR_MESSAGE);
-            responseField.setText("Thanh toán thất bại - không đủ tiền.");
             return;
         }
 
-        long newBalance = balance - finalPrice;
-        setBalanceToCard(newBalance, 0x03);
+        // ===== 8) TRỪ TIỀN (LOG MUA HÀNG = 0x03) =====
+        setBalanceToCard(balance - finalPrice, 0x03);
 
-        int currentPoints = getPointsFromCard();
-        int earned = (int)(p.price / 500_000) * 100;
-        int newPoints = currentPoints + earned;
+        // ===== 9) +50 ĐIỂM / 1 LẦN MUA =====
+        int newPoints = getPointsFromCard() + 50;
         setPointsToCard(newPoints);
 
-        if (voucherLv > 0) {
+        // ===== 10) XỬ LÝ VOUCHER SAU MUA =====
+        // Nếu user CHỌN dùng voucher -> voucher bị xóa
+        // Nếu user KHÔNG dùng -> giữ voucher cho lần sau
+        if (willUseVoucher && voucherLv > 0) {
             setVoucherLevel(0);
         }
 
-        responseField.setText("Mua thành công " + p.name +
-                ". Số dư còn: " + newBalance + " VNĐ, điểm: " + newPoints);
-        JOptionPane.showMessageDialog(this, "Mua thành công!", "Thành công", JOptionPane.INFORMATION_MESSAGE);
+        JOptionPane.showMessageDialog(
+                this,
+                "Mua hàng thành công!\nThanh toán: " + formatPrice(finalPrice)
+                        + (willUseVoucher ? "\nVoucher đã được sử dụng." : (hasVoucher ? "\nBạn đã không dùng voucher (voucher vẫn còn)." : "")),
+                "Thành công",
+                JOptionPane.INFORMATION_MESSAGE
+        );
     }
 
-    // ================== ĐỔI ĐIỂM LẤY VOUCHER ==================
     // ================== ĐỔI ĐIỂM LẤY VOUCHER (UI Ô VUÔNG) ==================
     private void exchangePoints() {
         if (!isConnected || channel == null) {
@@ -1833,7 +2165,42 @@ public class MembershipCardGUI extends JFrame {
         JLabel title = new JLabel("Chọn voucher muốn đổi");
         title.setFont(new Font("Segoe UI", Font.BOLD, 16));
         title.setForeground(PRIMARY_PURPLE);
-        mainPanel.add(title, BorderLayout.NORTH);
+        // ===== HIỂN THỊ VOUCHER + ĐIỂM HIỆN TẠI =====
+        try {
+            int currentVoucherLv = getVoucherLevel();
+            int currentPoints = getPointsFromCard();
+
+            String voucherText;
+            if (currentVoucherLv == 0) {
+                voucherText = "Voucher hiện tại: Chưa có";
+            } else {
+                int percent = switch (currentVoucherLv) {
+                    case 1 -> 10;
+                    case 2 -> 15;
+                    case 3 -> 20;
+                    case 4 -> 25;
+                    case 5 -> 30;
+                    default -> 0;
+                };
+                voucherText = "Voucher hiện tại: " + percent + "%";
+            }
+
+            JLabel currentInfo = new JLabel(voucherText + " | Điểm hiện có: " + currentPoints);
+            currentInfo.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            currentInfo.setForeground(TEXT_DARK);
+
+            JPanel northPanel = new JPanel(new BorderLayout(0, 6));
+            northPanel.setOpaque(false);
+            northPanel.add(title, BorderLayout.NORTH);
+            northPanel.add(currentInfo, BorderLayout.SOUTH);
+
+            mainPanel.add(northPanel, BorderLayout.NORTH);
+
+        } catch (Exception e) {
+            // fallback nếu lỗi thẻ
+            mainPanel.add(title, BorderLayout.NORTH);
+        }
+
 
         // Grid 3x2 card
         JPanel grid = new JPanel(new GridLayout(3, 2, 12, 12));
@@ -1894,36 +2261,74 @@ public class MembershipCardGUI extends JFrame {
         }
 
         int idx = selected[0];
-        int cost = costPoints[idx];
-        int level = voucherLevels[idx];
-        if (!verifyPin()) {
-            return;
-        }
+
+
+        int targetCost = costPoints[idx];
+        int targetLevel = voucherLevels[idx];
+
+        if (!verifyPin()) return;
+
         try {
+            int currentVoucherLv = getVoucherLevel();
+            int currentVoucherCost = 0;
+
+            if (currentVoucherLv >= 1 && currentVoucherLv <= 5) {
+                currentVoucherCost = costPoints[currentVoucherLv - 1];
+            }
+
+            // ❌ Không cho đổi cùng level
+            if (currentVoucherLv == targetLevel) {
+                JOptionPane.showMessageDialog(
+                        this,
+                        "Bạn đang có đúng voucher này rồi.",
+                        "Thông báo",
+                        JOptionPane.INFORMATION_MESSAGE
+                );
+                return;
+            }
+
+            // ❌ Không cho đổi xuống thấp hơn
+            if (currentVoucherLv > targetLevel) {
+                JOptionPane.showMessageDialog(
+                        this,
+                        "Bạn đang có voucher cao hơn.\nKhông thể đổi xuống thấp hơn.",
+                        "Không hợp lệ",
+                        JOptionPane.WARNING_MESSAGE
+                );
+                return;
+            }
+
+            // ✅ CHỈ TRỪ PHẦN CHÊNH LỆCH
+            int deltaCost = targetCost - currentVoucherCost;
+            if (deltaCost < 0) deltaCost = 0;
+
             int currentPoints = getPointsFromCard();
-            if (currentPoints < cost) {
+
+            if (currentPoints < deltaCost) {
                 JOptionPane.showMessageDialog(
                         this,
                         "Điểm của bạn không đủ (" + currentPoints + " điểm).\n" +
-                                "Cần " + cost + " điểm để đổi voucher này.",
+                                "Cần thêm " + deltaCost + " điểm để nâng voucher.",
                         "Không đủ điểm",
                         JOptionPane.ERROR_MESSAGE
                 );
                 return;
             }
 
-            setPointsToCard(currentPoints - cost);
-            setVoucherLevel(level);
+            setPointsToCard(currentPoints - deltaCost);
+            setVoucherLevel(targetLevel);
 
-            responseField.setText("Đổi voucher thành công! Điểm còn lại: " + (currentPoints - cost));
+            responseField.setText("Nâng voucher thành công! Điểm còn lại: " + (currentPoints - deltaCost));
+
             JOptionPane.showMessageDialog(
                     this,
-                    "Bạn đã đổi được " + saleOptions[idx] + " cho lần mua tiếp theo!",
+                    "Bạn đã " + (currentVoucherLv == 0 ? "đổi" : "nâng") + " lên " + saleOptions[idx] +
+                            "\nĐiểm bị trừ: " + deltaCost +
+                            "\nĐiểm còn lại: " + (currentPoints - deltaCost),
                     "Thành công",
                     JOptionPane.INFORMATION_MESSAGE
             );
 
-            // Cập nhật lại thông tin hiển thị (nếu đang mở)
             readCardData();
 
         } catch (Exception e) {
@@ -2649,4 +3054,6 @@ public class MembershipCardGUI extends JFrame {
             e.printStackTrace();
         }
     }
+
+
 }
