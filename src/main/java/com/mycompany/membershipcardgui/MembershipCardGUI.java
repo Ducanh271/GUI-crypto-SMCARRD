@@ -48,6 +48,7 @@ public class MembershipCardGUI extends JFrame {
     // ================== BIẾN LOGIC GỐC ==================
     private byte[] fileData;
     private boolean isConnected = false;
+    private boolean isCardBlocked = false; // 🔒 trạng thái thẻ bị khóa
 
     private Card card = null;
     private CardChannel channel = null;
@@ -577,9 +578,6 @@ public class MembershipCardGUI extends JFrame {
                     responseField.setText("Kết nối thành công!");
                     selectApplet(); // auto select AID
                     checkCardStatus();
-
-                    statusIndicator.setText("● Đã kết nối");
-                    statusIndicator.setForeground(new Color(150, 255, 150));
                 } else {
                     responseField.setText("Không có thẻ trong đầu đọc!");
                 }
@@ -595,15 +593,21 @@ public class MembershipCardGUI extends JFrame {
         if (isConnected && card != null) {
             try {
                 card.disconnect(false);
-                isConnected = false;
-                responseField.setText("Ngắt kết nối thành công!");
-                statusIndicator.setText("● Chưa kết nối");
-                initCardButton.setEnabled(true);
-                readCardButton.setEnabled(true);
-                statusIndicator.setForeground(new Color(255, 200, 200));
-            } catch (Exception ex) {
-                responseField.setText("Lỗi khi ngắt kết nối: " + ex.getMessage());
-            }
+            } catch (Exception ignored) {}
+
+            card = null;
+            channel = null;
+            isConnected = false;
+
+            responseField.setText("Ngắt kết nối thành công!");
+
+            // ✅ Reset UI về trạng thái chưa kết nối
+            statusIndicator.setText("● Chưa kết nối");
+            statusIndicator.setForeground(new Color(255, 200, 200));
+
+            // Disable hết khi chưa kết nối (đúng nghiệp vụ)
+            updateGUIState(false); // coi như thẻ chưa init
+            initCardButton.setEnabled(false); // vì chưa kết nối thì không cho init luôn
         } else {
             responseField.setText("Chưa có kết nối để ngắt!");
         }
@@ -660,8 +664,22 @@ public class MembershipCardGUI extends JFrame {
                 }
 
                 String pin = new String(passwordField.getPassword()).trim();
+                if (pin.isEmpty()) {
+                    JOptionPane.showMessageDialog(
+                            null,
+                            "Mã PIN không được để trống!",
+                            "Lỗi nhập liệu",
+                            JOptionPane.ERROR_MESSAGE
+                    );
+                    continue;
+                }
                 if (!pin.matches("\\d{6}")) {
-                    JOptionPane.showMessageDialog(null, "Mã PIN phải gồm đúng 6 chữ số!", "Lỗi", JOptionPane.ERROR_MESSAGE);
+                    JOptionPane.showMessageDialog(
+                            null,
+                            "Mã PIN phải gồm đúng 6 ký tự số!",
+                            "Lỗi nhập liệu",
+                            JOptionPane.ERROR_MESSAGE
+                    );
                     continue;
                 }
 
@@ -673,8 +691,18 @@ public class MembershipCardGUI extends JFrame {
                 int sw = verifyResponse.getSW();
 
                 // Xử lý các mã lỗi đặc biệt
-                if (sw == 0x6983) {
-                    JOptionPane.showMessageDialog(null, "Thẻ đã bị khóa (Blocked) do nhập sai quá nhiều lần!", "Lỗi", JOptionPane.ERROR_MESSAGE);
+                if (sw == 0x6983 || sw == 0x6982) {
+
+                    isCardBlocked = true; // 🔒 đánh dấu thẻ bị khóa
+                    handleCardBlockedUI(); // cập nhật giao diện
+
+                    JOptionPane.showMessageDialog(
+                            null,
+                            "🔒 Thẻ đã bị khóa do nhập sai PIN quá 3 lần!\n" +
+                                    "Vui lòng dùng chức năng RESET PIN để mở khóa.",
+                            "Thẻ bị khóa",
+                            JOptionPane.ERROR_MESSAGE
+                    );
                     return false;
                 }
                 if (sw != 0x9000) {
@@ -705,12 +733,33 @@ public class MembershipCardGUI extends JFrame {
                         return false; // Chặn đăng nhập dù biết PIN
                     }
                 } else {
-                    String msg = "Mã PIN không đúng!";
-                    msg += "\nBạn còn " + remainingTries + " lần thử trước khi thẻ bị khóa.";
-                    responseField.setText(msg);
-                    JOptionPane.showMessageDialog(null, msg, "Cảnh báo", JOptionPane.WARNING_MESSAGE);
+                    // 🔒 NẾU HẾT LƯỢT → KHÓA THẺ NGAY
+                    if (remainingTries <= 0) {
 
-                    if (remainingTries == 0) return false;
+                        isCardBlocked = true;
+                        handleCardBlockedUI();
+
+                        JOptionPane.showMessageDialog(
+                                null,
+                                "🔒 Thẻ đã bị khóa do nhập sai PIN quá 3 lần!\n" +
+                                        "Vui lòng dùng chức năng RESET PIN để mở khóa.",
+                                "Thẻ bị khóa",
+                                JOptionPane.ERROR_MESSAGE
+                        );
+                        return false;
+                    }
+
+                    // ❗ CÒN LƯỢT → CHỈ CẢNH BÁO
+                    String msg = "Mã PIN không đúng!";
+                    msg += "\nBạn còn " + remainingTries + " lần thử.";
+
+                    responseField.setText(msg);
+                    JOptionPane.showMessageDialog(
+                            null,
+                            msg,
+                            "Cảnh báo",
+                            JOptionPane.WARNING_MESSAGE
+                    );
                 }
             }
         } catch (Exception ex) {
@@ -906,6 +955,55 @@ public class MembershipCardGUI extends JFrame {
             gbc.fill = 0;
             rightPanel.add(createLabel("Số điện thoại:"), gbc);
             JTextField phoneField = new JTextField();
+            // ===== PLACEHOLDER: VD: 0912345678 =====
+            final String PHONE_PLACEHOLDER = "VD: 0912345678";
+            phoneField.setForeground(Color.GRAY);
+            phoneField.setText(PHONE_PLACEHOLDER);
+            phoneField.addFocusListener(new FocusAdapter() {
+                @Override
+                public void focusGained(FocusEvent e) {
+                    if (phoneField.getText().equals(PHONE_PLACEHOLDER)) {
+                        phoneField.setText("");
+                        phoneField.setForeground(TEXT_DARK);
+                    }
+                }
+
+                @Override
+                public void focusLost(FocusEvent e) {
+                    if (phoneField.getText().trim().isEmpty()) {
+                        phoneField.setForeground(Color.GRAY);
+                        phoneField.setText(PHONE_PLACEHOLDER);
+                    }
+                }
+            });
+
+// ===== CHẶN NHẬP CHỮ + GIỚI HẠN 10 SỐ =====
+            phoneField.addKeyListener(new KeyAdapter() {
+                @Override
+                public void keyTyped(KeyEvent e) {
+                    char c = e.getKeyChar();
+
+                    // Cho phép backspace/delete
+                    if (c == KeyEvent.VK_BACK_SPACE || c == KeyEvent.VK_DELETE) return;
+
+                    // Chỉ cho nhập số
+                    if (!Character.isDigit(c)) {
+                        e.consume();
+                        return;
+                    }
+
+                    // Nếu đang là placeholder thì xóa placeholder trước khi nhập
+                    if (phoneField.getText().equals(PHONE_PLACEHOLDER)) {
+                        phoneField.setText("");
+                        phoneField.setForeground(TEXT_DARK);
+                    }
+
+                    // Giới hạn 10 ký tự
+                    if (phoneField.getText().length() >= 10) {
+                        e.consume();
+                    }
+                }
+            });
             gbc.gridx = 1;
             gbc.fill = GridBagConstraints.HORIZONTAL;
             gbc.weightx = 1.0;
@@ -936,13 +1034,43 @@ public class MembershipCardGUI extends JFrame {
             String phone = phoneField.getText().trim();
 
             // VALIDATE DỮ LIỆU
+            if (fileData == null || fileData.length == 0) {
+                JOptionPane.showMessageDialog(
+                        null,
+                        "Vui lòng chọn ảnh đại diện cho thẻ!",
+                        "Thiếu ảnh",
+                        JOptionPane.ERROR_MESSAGE
+                );
+                continue; // quay lại form
+            }
+
+            if (phone.equals("VD: 0912345678")) {
+                JOptionPane.showMessageDialog(null,
+                        "Vui lòng nhập số điện thoại!",
+                        "Lỗi", JOptionPane.ERROR_MESSAGE);
+                continue;
+            }
+
+            // Validate đúng chuẩn VN: 0 + 9 số = 10 số
+            if (!isValidPhoneVN(phone)) {
+                JOptionPane.showMessageDialog(null,
+                        "Số điện thoại không hợp lệ!\nĐịnh dạng đúng: 0xxxxxxxxx (10 ký tự số).",
+                        "Lỗi", JOptionPane.ERROR_MESSAGE);
+                continue;
+            }
             if (!isValidName(name)) {
                 JOptionPane.showMessageDialog(null, "Tên mới không hợp lệ!", "Lỗi", JOptionPane.ERROR_MESSAGE);
                 continue; // Quay lại vòng lặp nhập
             }
-            if (!isValidDateOfBirth(dob)) {
-                JOptionPane.showMessageDialog(null, "Ngày sinh mới không hợp lệ!", "Lỗi", JOptionPane.ERROR_MESSAGE);
-                continue;
+            DobValidationResult result = validateDateOfBirth(dob);
+            if (result != DobValidationResult.OK) {
+                JOptionPane.showMessageDialog(
+                        null,
+                        getDobErrorMessage(result),
+                        "Lỗi ngày sinh",
+                        JOptionPane.ERROR_MESSAGE
+                );
+                continue; // quay lại form nhập
             }
             if (!pin.matches("\\d{6}")) {
                 JOptionPane.showMessageDialog(null, "Mã PIN phải là 6 chữ số!", "Lỗi", JOptionPane.ERROR_MESSAGE);
@@ -1034,6 +1162,10 @@ public class MembershipCardGUI extends JFrame {
 
                 JOptionPane.showMessageDialog(null, "Khởi tạo thành công! Mã: " + customerCode);
 
+                fileData = null;          // reset ảnh đã chọn
+                isCardBlocked = false;    // chắc chắn không bị khóa
+                checkCardStatus();        // cập nhật UI sang trạng thái đã init
+                return;                   // thoát khỏi vòng while(true)
             } catch (Exception e) {
                 if (conn != null) try {
                     conn.rollback();
@@ -1065,34 +1197,92 @@ public class MembershipCardGUI extends JFrame {
         String regex = "^[\\p{L} .'-]+$";
         return name.matches(regex) && name.length() >= 2 && name.length() <= 50;
     }
-    private boolean isValidDateOfBirth(String dobStr) {
-        SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy");
-        sdf.setLenient(false); // Bắt buộc đúng ngày tháng (vd: ko cho phép 30/02)
-        try {
-            Date dob = sdf.parse(dobStr);
-            Date now = new Date();
 
-            // Kiểm tra ngày sinh không được lớn hơn ngày hiện tại
-            if (dob.after(now)) {
-                return false;
-            }
-
-            // Kiểm tra tuổi hợp lý (ví dụ > 5 tuổi và < 120 tuổi)
-            Calendar calDob = Calendar.getInstance();
-            calDob.setTime(dob);
-            Calendar calNow = Calendar.getInstance();
-            int age = calNow.get(Calendar.YEAR) - calDob.get(Calendar.YEAR);
-            if (age < 5 || age > 120) return false;
-
-            return true;
-        } catch (Exception e) {
-            return false; // Sai định dạng
-        }
+    private enum DobValidationResult {
+        OK,
+        INVALID_FORMAT,
+        INVALID_DATE,
+        FUTURE_DATE,
+        TOO_YOUNG,
+        TOO_OLD
     }
+
+    private DobValidationResult validateDateOfBirth(String dobStr) {
+        SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy");
+        sdf.setLenient(false);
+
+        Date dob;
+        try {
+            dob = sdf.parse(dobStr);
+        } catch (java.text.ParseException e) {
+            // ❌ Sai format hoặc ngày không tồn tại (31/02)
+            return DobValidationResult.INVALID_FORMAT;
+        }
+
+        Date now = new Date();
+
+        // ❌ Ngày sinh tương lai
+        if (dob.after(now)) {
+            return DobValidationResult.FUTURE_DATE;
+        }
+
+        Calendar calDob = Calendar.getInstance();
+        calDob.setTime(dob);
+        Calendar calNow = Calendar.getInstance();
+
+        int age = calNow.get(Calendar.YEAR) - calDob.get(Calendar.YEAR);
+
+        // Điều chỉnh nếu chưa tới sinh nhật trong năm hiện tại
+        if (calNow.get(Calendar.DAY_OF_YEAR) < calDob.get(Calendar.DAY_OF_YEAR)) {
+            age--;
+        }
+
+        // ❌ Chưa đủ tuổi
+        if (age < 5) {
+            return DobValidationResult.TOO_YOUNG;
+        }
+
+        // ❌ Quá tuổi
+        if (age > 80) {
+            return DobValidationResult.TOO_OLD;
+        }
+
+        return DobValidationResult.OK;
+    }
+
+    private String getDobErrorMessage(DobValidationResult result) {
+        return switch (result) {
+            case INVALID_FORMAT ->
+                    "Ngày sinh không đúng định dạng!\nĐịnh dạng đúng: dd/MM/yyyy (VD: 25/12/2000).";
+            case INVALID_DATE ->
+                    "Ngày sinh không tồn tại!\nVui lòng kiểm tra lại ngày, tháng, năm.";
+            case FUTURE_DATE ->
+                    "Ngày sinh không được lớn hơn ngày hiện tại!";
+            case TOO_YOUNG ->
+                    "Chưa đủ tuổi!\nĐộ tuổi tối thiểu là 5.";
+            case TOO_OLD ->
+                    "Tuổi vượt quá giới hạn cho phép!\nĐộ tuổi tối đa là 80.";
+            default -> "";
+        };
+    }
+
+    private boolean isValidPhoneVN(String phone) {
+        return phone != null && phone.matches("^0\\d{9}$");
+    }
+
     // ================== ĐỌC THẺ ==================
     private void readCard() {
         if (!isConnected || channel == null) {
             responseField.setText("Bạn phải kết nối với thẻ trước!");
+            return;
+        }
+        if (isCardBlocked) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "🔒 Thẻ đang bị khóa.\nVui lòng RESET PIN để tiếp tục.",
+                    "Thẻ bị khóa",
+                    JOptionPane.ERROR_MESSAGE
+            );
             return;
         }
 
@@ -1325,6 +1515,15 @@ public class MembershipCardGUI extends JFrame {
             JOptionPane.showMessageDialog(null, "Bạn phải kết nối với thẻ trước!", "Lỗi", JOptionPane.ERROR_MESSAGE);
             return;
         }
+        if (isCardBlocked) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "🔒 Thẻ đang bị khóa.\nVui lòng RESET PIN để tiếp tục.",
+                    "Thẻ bị khóa",
+                    JOptionPane.ERROR_MESSAGE
+            );
+            return;
+        }
 
         while (true) {
             JPanel pinPanel = new JPanel(new GridBagLayout());
@@ -1375,15 +1574,15 @@ public class MembershipCardGUI extends JFrame {
 
 
             if (!oldPin.matches("\\d{6}")) {
-                JOptionPane.showMessageDialog(null, "Mã PIN cũ phải là 6 chữ số!", "Lỗi", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(null, "Mã PIN cũ phải gồm đúng 6 ký tự số!", "Lỗi nhập liệu", JOptionPane.ERROR_MESSAGE);
                 continue;
             }
             if (!newPin.matches("\\d{6}")) {
-                JOptionPane.showMessageDialog(null, "Mã PIN mới phải là 6 chữ số!", "Lỗi", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(null, "Mã PIN mới phải gồm đúng 6 ký tự số!", "Lỗi nhập liệu", JOptionPane.ERROR_MESSAGE);
                 continue;
             }
             if (!newPin.equals(confirmPin)) {
-                JOptionPane.showMessageDialog(null, "Mã PIN mới và xác nhận không trùng khớp.", "Lỗi", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(null, "Xác nhận mã PIN mới không khớp!", "Lỗi nhập liệu", JOptionPane.ERROR_MESSAGE);
                 continue;
             }
 
@@ -1394,13 +1593,55 @@ public class MembershipCardGUI extends JFrame {
                 CommandAPDU changePinCommand = new CommandAPDU(0x00, 0x04, 0x00, 0x00, dataBytes);
                 ResponseAPDU response = channel.transmit(changePinCommand);
 
-                if (response.getSW1() == 0x90 && response.getSW2() == 0x00) {
+                int sw = response.getSW();
+
+                if (sw == 0x9000) {
                     responseField.setText("Mã PIN đã được thay đổi thành công.");
-                    JOptionPane.showMessageDialog(null, "Mã PIN đã được thay đổi thành công.", "Thành công", JOptionPane.INFORMATION_MESSAGE);
+                    JOptionPane.showMessageDialog(
+                            null,
+                            "Mã PIN đã được thay đổi thành công.",
+                            "Thành công",
+                            JOptionPane.INFORMATION_MESSAGE
+                    );
                     return;
-                } else {
-                    String errorMessage = String.format("Lỗi khi thay đổi mã PIN. SW: %04X", response.getSW());
-                    JOptionPane.showMessageDialog(null, errorMessage, "Lỗi", JOptionPane.ERROR_MESSAGE);
+                }
+
+// ===== decode lỗi rõ ràng =====
+                switch (sw) {
+                    case 0x6982 -> { // sai PIN cũ (Security status not satisfied / verify fail)
+                        JOptionPane.showMessageDialog(
+                                null,
+                                "Mã PIN cũ không đúng!",
+                                "Sai mã PIN",
+                                JOptionPane.ERROR_MESSAGE
+                        );
+                        // cho nhập lại
+                    }
+
+                    case 0x6983 -> { // thẻ bị khóa
+                        isCardBlocked = true;
+                        handleCardBlockedUI();
+                        JOptionPane.showMessageDialog(
+                                null,
+                                "🔒 Thẻ đã bị khóa do nhập sai PIN quá số lần cho phép!\n" +
+                                        "Vui lòng dùng chức năng RESET PIN để mở khóa.",
+                                "Thẻ bị khóa",
+                                JOptionPane.ERROR_MESSAGE
+                        );
+                        return;
+                    }
+
+                    default -> {
+                        // fallback: không show SW cho user theo kiểu “SW=6982”
+                        JOptionPane.showMessageDialog(
+                                null,
+                                "Không thể thay đổi mã PIN. Vui lòng thử lại hoặc liên hệ hỗ trợ.",
+                                "Lỗi đổi mã PIN",
+                                JOptionPane.ERROR_MESSAGE
+                        );
+                        // nếu muốn debug thì log ra console:
+                        System.out.println("Change PIN failed. SW=0x" + Integer.toHexString(sw).toUpperCase());
+                    }
                 }
             } catch (Exception e) {
                 JOptionPane.showMessageDialog(null, "Lỗi khi thay đổi mã PIN: " + e.getMessage(), "Lỗi", JOptionPane.ERROR_MESSAGE);
@@ -1566,9 +1807,15 @@ public class MembershipCardGUI extends JFrame {
                 JOptionPane.showMessageDialog(null, "Tên không hợp lệ! Chỉ nhập chữ cái.", "Lỗi nhập liệu", JOptionPane.ERROR_MESSAGE);
                 return;
             }
-            if (!isValidDateOfBirth(dob)) {
-                JOptionPane.showMessageDialog(null, "Ngày sinh không hợp lệ (dd/MM/yyyy) hoặc ngày tương lai!", "Lỗi nhập liệu", JOptionPane.ERROR_MESSAGE);
-                return;
+            DobValidationResult result = validateDateOfBirth(dob);
+            if (result != DobValidationResult.OK) {
+                JOptionPane.showMessageDialog(
+                        null,
+                        getDobErrorMessage(result),
+                        "Lỗi ngày sinh",
+                        JOptionPane.ERROR_MESSAGE
+                );
+                continue; // quay lại form nhập
             }
             if (name.isEmpty() || dob.isEmpty() || phone.isEmpty()) {
                 JOptionPane.showMessageDialog(null, "Vui lòng nhập đầy đủ thông tin.", "Lỗi", JOptionPane.ERROR_MESSAGE);
@@ -1696,8 +1943,20 @@ public class MembershipCardGUI extends JFrame {
 
     // ================== NẠP TIỀN – DIALOG MỚI ==================
     private void topUpMoney() {
+
+        // ===== CHECK KẾT NỐI =====
         if (!isConnected || channel == null) {
             responseField.setText("Bạn phải kết nối với thẻ trước!");
+            return;
+        }
+
+        if (isCardBlocked) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Thẻ đang bị khóa!\nVui lòng RESET PIN để tiếp tục.",
+                    "Thẻ bị khóa",
+                    JOptionPane.ERROR_MESSAGE
+            );
             return;
         }
 
@@ -1711,7 +1970,7 @@ public class MembershipCardGUI extends JFrame {
         title.setForeground(PRIMARY_PURPLE);
         panel.add(title, BorderLayout.NORTH);
 
-        // ===== GRID CÁC BLOCK NẠP NHANH =====
+        // ===== GRID NẠP NHANH =====
         JPanel grid = new JPanel(new GridLayout(2, 2, 12, 12));
         grid.setBackground(LIGHT_BG);
 
@@ -1732,8 +1991,8 @@ public class MembershipCardGUI extends JFrame {
         JTextField inputField = new JTextField();
         inputField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
         inputField.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(210,210,210)),
-                BorderFactory.createEmptyBorder(6,8,6,8)
+                BorderFactory.createLineBorder(new Color(210, 210, 210)),
+                BorderFactory.createEmptyBorder(6, 8, 6, 8)
         ));
 
         for (int i = 0; i < quickAmounts.length; i++) {
@@ -1762,10 +2021,11 @@ public class MembershipCardGUI extends JFrame {
         JPanel inputPanel = new JPanel(new GridBagLayout());
         inputPanel.setBackground(LIGHT_BG);
         GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(5,5,5,5);
+        gbc.insets = new Insets(5, 5, 5, 5);
         gbc.anchor = GridBagConstraints.WEST;
 
-        gbc.gridx = 0; gbc.gridy = 0;
+        gbc.gridx = 0;
+        gbc.gridy = 0;
         inputPanel.add(createLabel("Nhập số tiền khác (VNĐ):"), gbc);
 
         gbc.gridx = 1;
@@ -1789,43 +2049,90 @@ public class MembershipCardGUI extends JFrame {
             return;
         }
 
+        // ===== XỬ LÝ INPUT =====
         String input = inputField.getText().trim();
         if (input.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Vui lòng nhập số tiền!", "Lỗi", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Vui lòng nhập số tiền!",
+                    "Lỗi",
+                    JOptionPane.ERROR_MESSAGE
+            );
+            return;
+        }
+
+        long amount;
+        try {
+            amount = Long.parseLong(input);
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Số tiền không hợp lệ!",
+                    "Lỗi",
+                    JOptionPane.ERROR_MESSAGE
+            );
+            return;
+        }
+
+        if (amount <= 0) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Số tiền phải lớn hơn 0!",
+                    "Lỗi",
+                    JOptionPane.ERROR_MESSAGE
+            );
+            return;
+        }
+
+        // ===== GIỚI HẠN LOG =====
+        final long MAX_TOPUP = 9_999_999_999L;
+        if (amount > MAX_TOPUP) {
+            amount = MAX_TOPUP;
+            inputField.setText(String.valueOf(MAX_TOPUP));
+
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Số tiền nạp vượt quá giới hạn.\n" +
+                            "Hệ thống đã tự động điều chỉnh về 9.999.999.999 VNĐ.",
+                    "Giới hạn nạp tiền",
+                    JOptionPane.INFORMATION_MESSAGE
+            );
+        }
+
+        // ===== VERIFY PIN =====
+        if (!verifyPin()) {
             return;
         }
 
         try {
-            long amount = Long.parseLong(input);
-            if (amount <= 0) {
-                JOptionPane.showMessageDialog(this, "Số tiền phải lớn hơn 0!", "Lỗi", JOptionPane.ERROR_MESSAGE);
-                return;
-            }
-            if (!verifyPin()) {
-                return;
-            }
             long current = getBalanceFromCard();
             long updated = current + amount;
 
-            // LOG_TOPUP = 0x02 (giữ logic cũ)
+            // LOG_TOPUP = 0x02
             setBalanceToCard(updated, 0x02);
 
-            responseField.setText("Nạp tiền thành công: +" +
-                    formatMoneyNoSign(amount) +
-                    " VNĐ | Số dư mới: " +
-                    formatMoneyNoSign(updated) + " VNĐ");
+            responseField.setText(
+                    "Nạp tiền thành công: +" +
+                            formatMoneyNoSign(amount) +
+                            " VNĐ | Số dư mới: " +
+                            formatMoneyNoSign(updated) + " VNĐ"
+            );
 
             JOptionPane.showMessageDialog(
                     this,
-                    "Nạp tiền thành công!\nSố dư mới: " + formatMoneyNoSign(updated) + " VNĐ",
+                    "Nạp tiền thành công!\nSố dư mới: " +
+                            formatMoneyNoSign(updated) + " VNĐ",
                     "Thành công",
                     JOptionPane.INFORMATION_MESSAGE
             );
 
-        } catch (NumberFormatException ex) {
-            JOptionPane.showMessageDialog(this, "Số tiền không hợp lệ!", "Lỗi", JOptionPane.ERROR_MESSAGE);
         } catch (CardException ex) {
-            JOptionPane.showMessageDialog(this, "Lỗi thẻ: " + ex.getMessage(), "Lỗi", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Lỗi thẻ: " + ex.getMessage(),
+                    "Lỗi",
+                    JOptionPane.ERROR_MESSAGE
+            );
         }
     }
 
@@ -1834,6 +2141,15 @@ public class MembershipCardGUI extends JFrame {
     private void openStore() {
         if (!isConnected || channel == null) {
             responseField.setText("Bạn phải kết nối với thẻ trước!");
+            return;
+        }
+        if (isCardBlocked) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "🔒 Thẻ đang bị khóa.\nVui lòng RESET PIN để tiếp tục.",
+                    "Thẻ bị khóa",
+                    JOptionPane.ERROR_MESSAGE
+            );
             return;
         }
 
@@ -1937,80 +2253,6 @@ public class MembershipCardGUI extends JFrame {
             JOptionPane.showMessageDialog(this, "Lỗi thẻ: " + ex.getMessage(), "Lỗi", JOptionPane.ERROR_MESSAGE);
         }
     }
-
-//    private void handlePurchase(List<CartItem> cart) throws CardException {
-//
-//        long balance = getBalanceFromCard();
-//        int tier = getTierFromCard();
-//        int voucherLv = getVoucherLevel();
-//
-//        // ===== TÍNH TỔNG GỐC =====
-//        long totalRaw = 0;
-//        for (CartItem item : cart) {
-//            totalRaw += item.product.price * item.quantity;
-//        }
-//
-//        // ===== GIẢM THEO TIER =====
-//        double tierDiscount = Math.min(tier * 0.05, 0.20);
-//
-//        // ===== GIẢM THEO VOUCHER =====
-//        double voucherDiscount = switch (voucherLv) {
-//            case 1 -> 0.10;
-//            case 2 -> 0.15;
-//            case 3 -> 0.20;
-//            case 4 -> 0.25;
-//            case 5 -> 0.30;
-//            default -> 0.0;
-//        };
-//
-//        double totalDiscount = Math.min(tierDiscount + voucherDiscount, 0.7);
-//        long finalPrice = Math.round(totalRaw * (1.0 - totalDiscount));
-//
-//        // ===== BILL =====
-//        StringBuilder bill = new StringBuilder("Chi tiết mua hàng:\n");
-//
-//        for (CartItem item : cart) {
-//            bill.append("- ")
-//                    .append(item.product.name)
-//                    .append(" x")
-//                    .append(item.quantity)
-//                    .append(" = ")
-//                    .append(formatPrice(item.product.price * item.quantity))
-//                    .append("\n");
-//        }
-//
-//        bill.append("\nTổng gốc: ").append(formatPrice(totalRaw))
-//                .append("\nGiảm giá: ").append((int)(totalDiscount * 100)).append("%")
-//                .append("\nThanh toán: ").append(formatPrice(finalPrice))
-//                .append("\nSố dư hiện tại: ").append(formatPrice(balance))
-//                .append("\n\nXác nhận mua?");
-//
-//        int confirm = JOptionPane.showConfirmDialog(
-//                this,
-//                bill.toString(),
-//                "Xác nhận mua hàng",
-//                JOptionPane.OK_CANCEL_OPTION
-//        );
-//
-//        if (confirm != JOptionPane.OK_OPTION) return;
-//
-//        if (balance < finalPrice) {
-//            JOptionPane.showMessageDialog(this, "Không đủ tiền!", "Lỗi", JOptionPane.ERROR_MESSAGE);
-//            return;
-//        }
-//
-//        // ===== TRỪ TIỀN =====
-//        setBalanceToCard(balance - finalPrice, 0x03);
-//
-//        // ===== +50 ĐIỂM / 1 LẦN MUA =====
-//        int newPoints = getPointsFromCard() + 50;
-//        setPointsToCard(newPoints);
-//
-//        // ===== XÓA VOUCHER =====
-//        if (voucherLv > 0) setVoucherLevel(0);
-//
-//        JOptionPane.showMessageDialog(this, "Mua hàng thành công!", "Thành công", JOptionPane.INFORMATION_MESSAGE);
-//    }
 
     private void handlePurchase(List<CartItem> cart) throws CardException {
 
@@ -2142,6 +2384,15 @@ public class MembershipCardGUI extends JFrame {
     private void exchangePoints() {
         if (!isConnected || channel == null) {
             responseField.setText("Bạn phải kết nối với thẻ trước!");
+            return;
+        }
+        if (isCardBlocked) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "🔒 Thẻ đang bị khóa.\nVui lòng RESET PIN để tiếp tục.",
+                    "Thẻ bị khóa",
+                    JOptionPane.ERROR_MESSAGE
+            );
             return;
         }
 
@@ -2328,9 +2579,6 @@ public class MembershipCardGUI extends JFrame {
                     "Thành công",
                     JOptionPane.INFORMATION_MESSAGE
             );
-
-            readCardData();
-
         } catch (Exception e) {
             responseField.setText("Lỗi đổi điểm: " + e.getMessage());
         }
@@ -2341,6 +2589,15 @@ public class MembershipCardGUI extends JFrame {
     private void openUpgradeShop() {
         if (!isConnected || channel == null) {
             responseField.setText("Bạn phải kết nối với thẻ trước!");
+            return;
+        }
+        if (isCardBlocked) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "🔒 Thẻ đang bị khóa.\nVui lòng RESET PIN để tiếp tục.",
+                    "Thẻ bị khóa",
+                    JOptionPane.ERROR_MESSAGE
+            );
             return;
         }
 
@@ -2570,10 +2827,23 @@ public class MembershipCardGUI extends JFrame {
             ResponseAPDU respReset = channel.transmit(resetCmd);
 
             if (respReset.getSW() == 0x9000) {
-                JOptionPane.showMessageDialog(null, "Reset PIN thành công!\nMã PIN mới là: 000000.\nVui lòng đổi PIN ngay lập tức.", "Thành công", JOptionPane.INFORMATION_MESSAGE);
-                // Tự động mở form đổi PIN để người dùng đổi luôn cho an toàn
+
+                isCardBlocked = false; // 🔓 mở khóa thẻ
+
+                JOptionPane.showMessageDialog(
+                        null,
+                        "Reset PIN thành công!\nMã PIN mới: 000000\nVui lòng đổi PIN ngay.",
+                        "Thành công",
+                        JOptionPane.INFORMATION_MESSAGE
+                );
+
+                // Mở lại các chức năng theo trạng thái thẻ
+                checkCardStatus();
+
+                // Bắt user đổi PIN ngay
                 changePin();
-            } else {
+            }
+            else {
                 JOptionPane.showMessageDialog(null, "Lỗi Reset từ thẻ: " + Integer.toHexString(respReset.getSW()), "Lỗi", JOptionPane.ERROR_MESSAGE);
             }
 
@@ -2812,7 +3082,7 @@ public class MembershipCardGUI extends JFrame {
             return;
         }
         try {
-            List<Integer> deltas = new ArrayList<>();
+            List<Long> deltas = new ArrayList<>();
             List<String> types = new ArrayList<>();
             List<Long> times = new ArrayList<>();
 
@@ -2832,11 +3102,12 @@ public class MembershipCardGUI extends JFrame {
                 if (type != 0x02 && type != 0x03 && type != 0x05)
                     continue;
 
-                String digits = new String(raw, 2, 10).replace("\u0000", "");
+                String digits = new String(raw, 2, 10).replace("\u0000", "").trim();
                 digits = digits.replaceFirst("^0+(?!$)", "");
-                if (digits.equals("")) digits = "0";
+                if (digits.isEmpty()) digits = "0";
 
-                int delta = Integer.parseInt(digits);
+                // ❗ DÙNG LONG, KHÔNG DÙNG INT
+                long delta = Long.parseLong(digits);
                 if (sign == '-') delta = -delta;
 
                 long t =
@@ -3000,15 +3271,9 @@ public class MembershipCardGUI extends JFrame {
     }
 
     private void updateGUIState(boolean isCardInitialized) {
-        // Nếu thẻ ĐÃ có dữ liệu (isCardInitialized = true):
-        // -> Khóa nút "Khởi tạo", Mở các nút khác
-
-        // Nếu thẻ TRẮNG (isCardInitialized = false):
-        // -> Mở nút "Khởi tạo", Khóa các nút khác (trừ Unblock phòng khi cần)
 
         initCardButton.setEnabled(!isCardInitialized);
 
-        // Các nút chức năng chỉ dùng được khi thẻ đã Init
         readCardButton.setEnabled(isCardInitialized);
         changePinButton.setEnabled(isCardInitialized);
         editButton.setEnabled(isCardInitialized);
@@ -3017,43 +3282,79 @@ public class MembershipCardGUI extends JFrame {
         upgradeTierButton.setEnabled(isCardInitialized);
         exchangePointsButton.setEnabled(isCardInitialized);
         forgotPinButton.setEnabled(isCardInitialized);
-
-        // unblockCartButton.setEnabled(true); // Nút mở khóa có thể luôn mở hoặc tùy bạn
         verifybtn.setEnabled(isCardInitialized);
         viewLogButton.setEnabled(isCardInitialized);
 
-        // Đổi màu nút Khởi tạo để người dùng dễ nhận biết
         if (!isCardInitialized) {
-            initCardButton.setBackground(SUCCESS_COLOR); // Xanh lá - Mời gọi bấm
-            initCardButton.setText("KHỞI TẠO THẺ NGAY");
+            initCardButton.setBackground(SUCCESS_COLOR);
         } else {
             initCardButton.setBackground(Color.GRAY);
-            initCardButton.setText("Thẻ đã khởi tạo");
         }
     }
+
+    private void handleCardBlockedUI() {
+
+        responseField.setText("🔒 Thẻ đang bị khóa (PIN bị block)");
+
+        // Disable toàn bộ chức năng
+        readCardButton.setEnabled(false);
+        changePinButton.setEnabled(false);
+        editButton.setEnabled(false);
+        topUpButton.setEnabled(false);
+        storeButton.setEnabled(false);
+        upgradeTierButton.setEnabled(false);
+        exchangePointsButton.setEnabled(false);
+        viewLogButton.setEnabled(false);
+        verifybtn.setEnabled(false);
+
+        // CHỈ cho phép RESET PIN
+        forgotPinButton.setEnabled(true);
+
+        // Header trạng thái
+        statusIndicator.setText("● THẺ BỊ KHÓA");
+        statusIndicator.setForeground(DANGER_COLOR);
+    }
+
     private void checkCardStatus() {
+
+        // ===== 1. CHƯA KẾT NỐI =====
+        if (!isConnected) {
+            statusIndicator.setText("● Chưa kết nối");
+            statusIndicator.setForeground(new Color(255, 200, 200));
+            return;
+        }
+
+        // ===== 2. THẺ BỊ KHÓA =====
+        if (isCardBlocked) {
+            statusIndicator.setText("● THẺ BỊ KHÓA");
+            statusIndicator.setForeground(DANGER_COLOR);
+            return;
+        }
+
+        // ===== 3. ĐÃ KẾT NỐI → CHECK INIT =====
         try {
-            // Gửi lệnh 0x25 để check
             CommandAPDU cmd = new CommandAPDU(0x00, 0x25, 0x00, 0x00);
             ResponseAPDU resp = channel.transmit(cmd);
 
             if (resp.getSW() == 0x9000) {
-                byte[] data = resp.getData();
-                boolean isInit = (data[0] == 0x01);
+                boolean isInit = resp.getData()[0] == 0x01;
 
-                updateGUIState(isInit); // Cập nhật giao diện
+                updateGUIState(isInit);
 
                 if (isInit) {
+                    statusIndicator.setText("● ĐÃ KẾT NỐI");
+                    statusIndicator.setForeground(SUCCESS_COLOR);
                     responseField.setText("Thẻ hợp lệ. Sẵn sàng giao dịch.");
                 } else {
+                    statusIndicator.setText("● THẺ CHƯA KHỞI TẠO");
+                    statusIndicator.setForeground(WARNING_COLOR);
                     responseField.setText("Thẻ trắng. Vui lòng khởi tạo!");
-                    JOptionPane.showMessageDialog(this, "Đây là thẻ mới. Vui lòng khởi tạo thông tin!", "Thông báo", JOptionPane.INFORMATION_MESSAGE);
                 }
             }
         } catch (Exception e) {
             e.printStackTrace();
+            statusIndicator.setText("● LỖI THẺ");
+            statusIndicator.setForeground(DANGER_COLOR);
         }
     }
-
-
 }
