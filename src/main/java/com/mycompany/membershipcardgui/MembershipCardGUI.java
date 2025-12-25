@@ -1767,6 +1767,27 @@ public class MembershipCardGUI extends JFrame {
             gbc.gridx = 0; gbc.gridy = row;
             panel.add(createLabel("Số Điện Thoại:"), gbc);
             JTextField phoneFieldNew = new JTextField(getPhone.getText());
+            // ===== CHẶN NHẬP CHỮ + GIỚI HẠN 10 SỐ (giống phần tạo thẻ) =====
+            phoneFieldNew.addKeyListener(new KeyAdapter() {
+                @Override
+                public void keyTyped(KeyEvent e) {
+                    char c = e.getKeyChar();
+
+                    // Cho phép backspace/delete
+                    if (c == KeyEvent.VK_BACK_SPACE || c == KeyEvent.VK_DELETE) return;
+
+                    // Chỉ cho nhập số
+                    if (!Character.isDigit(c)) {
+                        e.consume();
+                        return;
+                    }
+
+                    // Giới hạn 10 ký tự
+                    if (phoneFieldNew.getText().length() >= 10) {
+                        e.consume();
+                    }
+                }
+            });
             gbc.gridx = 1; gbc.fill = GridBagConstraints.HORIZONTAL;
             panel.add(phoneFieldNew, gbc);
             row++;
@@ -1822,8 +1843,10 @@ public class MembershipCardGUI extends JFrame {
                 continue;
             }
 
-            if (!phone.matches("\\d{8,15}")) {
-                JOptionPane.showMessageDialog(null, "Số điện thoại không hợp lệ.", "Lỗi", JOptionPane.ERROR_MESSAGE);
+            if (!isValidPhoneVN(phone)) {
+                JOptionPane.showMessageDialog(null,
+                        "Số điện thoại không hợp lệ!\nĐịnh dạng đúng: 0xxxxxxxxx (10 ký tự số).",
+                        "Lỗi", JOptionPane.ERROR_MESSAGE);
                 continue;
             }
 
