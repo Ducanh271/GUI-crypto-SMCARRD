@@ -7,7 +7,7 @@ import java.awt.*;
 public class TransactionDetailDialog extends JDialog {
 
     public TransactionDetailDialog(int transactionId) {
-        setTitle("Chi tiết đơn hàng #" + transactionId);
+        setTitle("Chi tiết đơn hàng:");
         setSize(600, 400);
         setLocationRelativeTo(null);
         setLayout(new BorderLayout());
@@ -31,15 +31,18 @@ public class TransactionDetailDialog extends JDialog {
         table.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 14));
         table.getTableHeader().setBackground(new Color(240, 240, 240));
 
-        // Căn giữa các cột số lượng và tiền
+        // Căn giữa cột số lượng
         DefaultTableCellRenderer centerRenderer = new DefaultTableCellRenderer();
         centerRenderer.setHorizontalAlignment(JLabel.CENTER);
-        table.getColumnModel().getColumn(1).setCellRenderer(centerRenderer); // Số lượng
+        table.getColumnModel().getColumn(1).setCellRenderer(centerRenderer);
 
+// Căn phải các cột tiền: Đơn giá, Giảm hạng, Giảm voucher, Thành tiền
         DefaultTableCellRenderer rightRenderer = new DefaultTableCellRenderer();
         rightRenderer.setHorizontalAlignment(JLabel.RIGHT);
-        table.getColumnModel().getColumn(2).setCellRenderer(rightRenderer); // Đơn giá
-        table.getColumnModel().getColumn(3).setCellRenderer(rightRenderer); // Thành tiền
+        table.getColumnModel().getColumn(2).setCellRenderer(rightRenderer);
+        table.getColumnModel().getColumn(3).setCellRenderer(rightRenderer);
+        table.getColumnModel().getColumn(4).setCellRenderer(rightRenderer);
+        table.getColumnModel().getColumn(5).setCellRenderer(rightRenderer);
 
         // 4. Đưa bảng vào ScrollPane
         JScrollPane scrollPane = new JScrollPane(table);

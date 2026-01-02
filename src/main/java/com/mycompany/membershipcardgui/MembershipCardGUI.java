@@ -65,6 +65,7 @@ public class MembershipCardGUI extends JFrame {
     private JTextField responseField, getMaKH, getName, getDob, getGender, getPoints;
     private JTextField getPhone;
     private JPasswordField pinField;
+    private JPasswordField pinConfirmField;
     private JTextField makhField, nameField, dobField;
     private JComboBox<String> genderComboBox;
     private JButton browseButton;
@@ -106,6 +107,15 @@ public class MembershipCardGUI extends JFrame {
         int tier;
         long price;
         TierPack(String n, int t, long p) { name = n; tier = t; price = p; }
+    }
+
+    private static class PurchaseSummary {
+        long rawTotal;
+        long afterTier;
+        long finalPaid;
+        long tierDiscountAmount;
+        long voucherDiscountAmount;
+        boolean usedVoucher;
     }
 
     private Product[] products = new Product[]{
@@ -293,9 +303,7 @@ public class MembershipCardGUI extends JFrame {
 
     // ================== CONSTRUCTOR – GIAO DIỆN NGOÀI ==================
     public MembershipCardGUI() {
-        Database.createNewTable(); //bảng thành viên
-        Database.createTransactionTable();      // transactions
-        Database.createTransactionItemTable();  // chi tiết đơn hàng
+        Database.migrateDatabase();
         frame = new JFrame("Hệ Thống Quản Lý Thẻ Thành Viên");
         frame.setSize(1200, 700);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -656,9 +664,36 @@ public class MembershipCardGUI extends JFrame {
 
                 JPasswordField passwordField = new JPasswordField();
                 passwordField.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-                passwordField.setPreferredSize(new Dimension(150, 25)); // Set size
-                gbc.gridx = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
-                pinPanel.add(passwordField, gbc);
+                passwordField.setPreferredSize(new Dimension(150, 25)); // size ô nhập
+
+// ✅ Chặn nhập: chỉ số + tối đa 6 ký tự
+                passwordField.addKeyListener(new KeyAdapter() {
+                    @Override
+                    public void keyTyped(KeyEvent e) {
+                        char c = e.getKeyChar();
+
+                        // cho phép backspace/delete
+                        if (c == KeyEvent.VK_BACK_SPACE || c == KeyEvent.VK_DELETE) return;
+
+                        // chỉ cho nhập số
+                        if (!Character.isDigit(c)) {
+                            e.consume();
+                            return;
+                        }
+
+                        // tối đa 6 ký tự
+                        if (passwordField.getPassword().length >= 6) {
+                            e.consume();
+                        }
+                    }
+                });
+
+                gbc.gridx = 1;
+                gbc.fill = GridBagConstraints.HORIZONTAL;
+                gbc.weightx = 1.0;
+
+// ✅ Bọc vào panel có nút mắt (bạn đã có hàm createPasswordFieldWithEye)
+                pinPanel.add(createPasswordFieldWithEye(passwordField), gbc);
 
                 int option = JOptionPane.showConfirmDialog(null, pinPanel, "Xác thực mã PIN",
                         JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
@@ -895,12 +930,48 @@ public class MembershipCardGUI extends JFrame {
             gbc.gridx = 0;
             gbc.gridy = row;
             rightPanel.add(createLabel("Pin:"), gbc);
+
             pinField = new JPasswordField();
             pinField.setPreferredSize(new Dimension(200, 25));
+            pinField.addKeyListener(new KeyAdapter() {
+                @Override
+                public void keyTyped(KeyEvent e) {
+                    char c = e.getKeyChar();
+                    if (c == KeyEvent.VK_BACK_SPACE || c == KeyEvent.VK_DELETE) return;
+                    if (!Character.isDigit(c)) { e.consume(); return; }
+                    if (pinField.getPassword().length >= 6) e.consume();
+                }
+            });
+
             gbc.gridx = 1;
             gbc.fill = GridBagConstraints.HORIZONTAL;
             gbc.weightx = 1.0;
-            rightPanel.add(pinField, gbc);
+            rightPanel.add(createPasswordFieldWithEye(pinField), gbc);
+            row++;
+
+            // NHẬP LẠI PIN
+            gbc.gridx = 0;
+            gbc.gridy = row;
+            gbc.fill = 0;
+            gbc.weightx = 0;
+            rightPanel.add(createLabel("Nhập lại Pin:"), gbc);
+
+            pinConfirmField = new JPasswordField();
+            pinConfirmField.setPreferredSize(new Dimension(200, 25));
+            pinConfirmField.addKeyListener(new KeyAdapter() {
+                @Override
+                public void keyTyped(KeyEvent e) {
+                    char c = e.getKeyChar();
+                    if (c == KeyEvent.VK_BACK_SPACE || c == KeyEvent.VK_DELETE) return;
+                    if (!Character.isDigit(c)) { e.consume(); return; }
+                    if (pinConfirmField.getPassword().length >= 6) e.consume();
+                }
+            });
+
+            gbc.gridx = 1;
+            gbc.fill = GridBagConstraints.HORIZONTAL;
+            gbc.weightx = 1.0;
+            rightPanel.add(createPasswordFieldWithEye(pinConfirmField), gbc);
             row++;
 
             // Mã KH (Hiển thị tượng trưng, ID thật sẽ lấy từ DB)
@@ -1041,6 +1112,7 @@ public class MembershipCardGUI extends JFrame {
             String gender = (String) genderComboBox.getSelectedItem();
             String pin = new String(pinField.getPassword()).trim();
             String phone = phoneField.getText().trim();
+            String pinConfirm = new String(pinConfirmField.getPassword()).trim();
 
             // VALIDATE DỮ LIỆU
             if (fileData == null || fileData.length == 0) {
@@ -1081,9 +1153,51 @@ public class MembershipCardGUI extends JFrame {
                 );
                 continue; // quay lại form nhập
             }
+            // ✅ Validate PIN (tách riêng để biết sai ở đâu)
+            pin = pin.trim();
+            pinConfirm = pinConfirm.trim();
+
+// 1) Không được để trống
+            if (pin.isEmpty()) {
+                JOptionPane.showMessageDialog(null,
+                        "PIN không được để trống!",
+                        "Lỗi nhập liệu",
+                        JOptionPane.ERROR_MESSAGE);
+                continue;
+            }
+            if (pinConfirm.isEmpty()) {
+                JOptionPane.showMessageDialog(null,
+                        "Nhập lại PIN không được để trống!",
+                        "Lỗi nhập liệu",
+                        JOptionPane.ERROR_MESSAGE);
+                continue;
+            }
+
+// 2) PIN phải đúng 6 chữ số
             if (!pin.matches("\\d{6}")) {
-                JOptionPane.showMessageDialog(null, "Mã PIN phải là 6 chữ số!", "Lỗi", JOptionPane.ERROR_MESSAGE);
-                return; // Dùng return thay vì continue trong hàm này
+                JOptionPane.showMessageDialog(null,
+                        "PIN phải gồm đúng 6 chữ số!",
+                        "Lỗi nhập liệu",
+                        JOptionPane.ERROR_MESSAGE);
+                continue;
+            }
+
+// 3) Nhập lại PIN phải đúng 6 chữ số
+            if (!pinConfirm.matches("\\d{6}")) {
+                JOptionPane.showMessageDialog(null,
+                        "Nhập lại PIN phải gồm đúng 6 chữ số!",
+                        "Lỗi nhập liệu",
+                        JOptionPane.ERROR_MESSAGE);
+                continue;
+            }
+
+// 4) So khớp
+            if (!pin.equals(pinConfirm)) {
+                JOptionPane.showMessageDialog(null,
+                        "PIN và Nhập lại PIN không khớp!",
+                        "Lỗi nhập liệu",
+                        JOptionPane.ERROR_MESSAGE);
+                continue;
             }
             if (name.isEmpty() || dob.isEmpty() || phone.isEmpty()) {
                 JOptionPane.showMessageDialog(null, "Vui lòng điền đầy đủ thông tin!", "Lỗi", JOptionPane.ERROR_MESSAGE);
@@ -1544,21 +1658,38 @@ public class MembershipCardGUI extends JFrame {
             JPasswordField oldPinField = new JPasswordField();
             JPasswordField newPinField = new JPasswordField();
             JPasswordField confirmPinField = new JPasswordField();
+            KeyAdapter pinLimiter = new KeyAdapter() {
+                @Override
+                public void keyTyped(KeyEvent e) {
+                    char c = e.getKeyChar();
+                    if (c == KeyEvent.VK_BACK_SPACE || c == KeyEvent.VK_DELETE) return;
+                    if (!Character.isDigit(c)) { e.consume(); return; }
+
+                    JPasswordField src = (JPasswordField) e.getSource();
+                    if (src.getPassword().length >= 6) e.consume();
+                }
+            };
+
+            oldPinField.addKeyListener(pinLimiter);
+            newPinField.addKeyListener(pinLimiter);
+            confirmPinField.addKeyListener(pinLimiter);
 
             int row = 0;
             gbc.gridx=0; gbc.gridy=row; pinPanel.add(createLabel("Mã PIN cũ:"), gbc);
             gbc.gridx=1; gbc.fill=GridBagConstraints.HORIZONTAL; gbc.weightx=1.0;
-            pinPanel.add(oldPinField, gbc); row++;
+            pinPanel.add(createPasswordFieldWithEye(oldPinField), gbc);
+            row++;
 
             gbc.gridx=0; gbc.gridy=row; gbc.fill=0; gbc.weightx=0;
             pinPanel.add(createLabel("Mã PIN mới:"), gbc);
             gbc.gridx=1; gbc.fill=GridBagConstraints.HORIZONTAL; gbc.weightx=1.0;
-            pinPanel.add(newPinField, gbc); row++;
+            pinPanel.add(createPasswordFieldWithEye(newPinField), gbc);
+            row++;
 
             gbc.gridx=0; gbc.gridy=row; gbc.fill=0; gbc.weightx=0;
             pinPanel.add(createLabel("Xác nhận mã PIN mới:"), gbc);
             gbc.gridx=1; gbc.fill=GridBagConstraints.HORIZONTAL; gbc.weightx=1.0;
-            pinPanel.add(confirmPinField, gbc);
+            pinPanel.add(createPasswordFieldWithEye(confirmPinField), gbc);
 
             int option = JOptionPane.showConfirmDialog(null, pinPanel, "Thay đổi mã PIN", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (option == JOptionPane.CANCEL_OPTION || option == JOptionPane.CLOSED_OPTION) {
@@ -2295,7 +2426,8 @@ public class MembershipCardGUI extends JFrame {
             long finalPrice = calculateFinalPrice(cart);
 
             // 3) Trừ tiền trên thẻ
-            handlePurchase(cart);
+            PurchaseSummary sum = handlePurchase(cart);
+            if (sum == null) return; // user cancel hoặc fail
 
             // 4) Số dư sau khi mua
             long after = getBalanceFromCard();
@@ -2303,10 +2435,13 @@ public class MembershipCardGUI extends JFrame {
             // 5) Lưu transaction chính
             int transactionId = Database.insertTransaction(
                     currentMemberId,
-                    logIndex,          // ⭐ THÊM THAM SỐ NÀY
+                    logIndex,
                     before,
                     after,
-                    -finalPrice
+                    -sum.finalPaid,
+                    sum.rawTotal,
+                    sum.tierDiscountAmount,
+                    sum.voucherDiscountAmount
             );
 
             // 6) Lưu chi tiết từng sản phẩm
@@ -2330,7 +2465,7 @@ public class MembershipCardGUI extends JFrame {
 
     }
 
-    private void handlePurchase(List<CartItem> cart) throws CardException {
+    private PurchaseSummary handlePurchase(List<CartItem> cart) throws CardException {
 
         long balance = getBalanceFromCard();
         int tier = getTierFromCard();
@@ -2421,7 +2556,7 @@ public class MembershipCardGUI extends JFrame {
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.PLAIN_MESSAGE
         );
-        if (confirm != JOptionPane.OK_OPTION) return;
+        if (confirm != JOptionPane.OK_OPTION) return null;
 
         willUseVoucher = hasVoucher && useVoucherCheckbox.isSelected();
 
@@ -2430,7 +2565,7 @@ public class MembershipCardGUI extends JFrame {
         // ===== 7) KIỂM TRA TIỀN =====
         if (balance < finalPrice) {
             JOptionPane.showMessageDialog(this, "Không đủ tiền!", "Lỗi", JOptionPane.ERROR_MESSAGE);
-            return;
+            return null;
         }
 
         // ===== 8) TRỪ TIỀN (LOG MUA HÀNG = 0x03) =====
@@ -2447,6 +2582,14 @@ public class MembershipCardGUI extends JFrame {
             setVoucherLevel(0);
         }
 
+        PurchaseSummary sum = new PurchaseSummary();
+        sum.rawTotal = totalRaw;
+        sum.afterTier = afterTierPrice;
+        sum.finalPaid = finalPrice;
+        sum.tierDiscountAmount = tierSaved;
+        sum.voucherDiscountAmount = willUseVoucher ? voucherSaved : 0;
+        sum.usedVoucher = willUseVoucher;
+
         JOptionPane.showMessageDialog(
                 this,
                 "Mua hàng thành công!\nThanh toán: " + formatPrice(finalPrice)
@@ -2454,6 +2597,8 @@ public class MembershipCardGUI extends JFrame {
                 "Thành công",
                 JOptionPane.INFORMATION_MESSAGE
         );
+
+        return sum;
     }
 
     // ================== ĐỔI ĐIỂM LẤY VOUCHER (UI Ô VUÔNG) ==================
@@ -3389,6 +3534,36 @@ public class MembershipCardGUI extends JFrame {
         lb.setHorizontalAlignment(SwingConstants.CENTER);
         return lb;
     }
+
+    // ===== PASSWORD + NÚT MẮT ẨN/HIỆN =====
+    private JPanel createPasswordFieldWithEye(JPasswordField pf) {
+        JPanel wrap = new JPanel(new BorderLayout());
+        wrap.setOpaque(false);
+
+        final char defaultEcho = pf.getEchoChar();
+
+        JButton eyeBtn = new JButton("👁");
+        eyeBtn.setFocusable(false);
+        eyeBtn.setMargin(new Insets(0, 8, 0, 8));
+        eyeBtn.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
+        eyeBtn.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 12));
+
+        eyeBtn.addActionListener(e -> {
+            boolean isHidden = pf.getEchoChar() != 0;
+            if (isHidden) {
+                pf.setEchoChar((char) 0); // hiện
+                eyeBtn.setText("🙈");
+            } else {
+                pf.setEchoChar(defaultEcho); // ẩn
+                eyeBtn.setText("👁");
+            }
+        });
+
+        wrap.add(pf, BorderLayout.CENTER);
+        wrap.add(eyeBtn, BorderLayout.EAST);
+        return wrap;
+    }
+
     // ================== UTIL ==================
     private String formatMoneyDelta(long n) {
         String formatted = String.format("%,d", Math.abs(n));

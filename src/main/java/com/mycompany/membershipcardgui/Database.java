@@ -1,5 +1,6 @@
 package com.mycompany.membershipcardgui;
 
+import javax.swing.table.DefaultTableModel;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -236,15 +237,20 @@ public class Database {
     public static void createTransactionTable() {
         String sql = """
         CREATE TABLE IF NOT EXISTS transactions (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            member_id INT NOT NULL,
-            log_index INT NOT NULL, -- moi them chi so de danh dau thu tu giao dich
-            balance_before INT NOT NULL,
-            balance_after INT NOT NULL,
-            delta INT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (member_id) REFERENCES members(id)
-        )
+                         id INT AUTO_INCREMENT PRIMARY KEY,
+                         member_id INT NOT NULL,
+                         log_index INT NOT NULL,
+                         balance_before BIGINT NOT NULL,
+                         balance_after  BIGINT NOT NULL,
+                         delta BIGINT NOT NULL,
+                
+                         raw_total BIGINT NOT NULL DEFAULT 0,
+                         tier_discount BIGINT NOT NULL DEFAULT 0,
+                         voucher_discount BIGINT NOT NULL DEFAULT 0,
+                
+                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                         FOREIGN KEY (member_id) REFERENCES members(id)
+                     )
     """;
 
         try (Connection conn = connect();
@@ -318,13 +324,15 @@ public class Database {
             int logIndex,
             long balanceBefore,
             long balanceAfter,
-            long delta
+            long delta,
+            long rawTotal,
+            long tierDiscount,
+            long voucherDiscount
     ) throws SQLException {
-
         String sql = """
         INSERT INTO transactions
-        (member_id, log_index, balance_before, balance_after, delta)
-        VALUES (?, ?, ?, ?, ?)
+                    (member_id, log_index, balance_before, balance_after, delta, raw_total, tier_discount, voucher_discount)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """;
 
         try (Connection conn = connect();
@@ -336,6 +344,9 @@ public class Database {
             ps.setLong(3, balanceBefore);
             ps.setLong(4, balanceAfter);
             ps.setLong(5, delta);
+            ps.setLong(6, rawTotal);
+            ps.setLong(7, tierDiscount);
+            ps.setLong(8, voucherDiscount);
 
             ps.executeUpdate();
 
@@ -409,35 +420,270 @@ public class Database {
 
     // Thêm vào class Database
 
-    public static javax.swing.table.DefaultTableModel getTransactionDetails(int transactionId) {
-        // Tên cột cho bảng
-        String[] columnNames = {"Sản phẩm", "Số lượng", "Đơn giá", "Thành tiền"};
-        javax.swing.table.DefaultTableModel model = new javax.swing.table.DefaultTableModel(null, columnNames);
+//    public static javax.swing.table.DefaultTableModel getTransactionDetails(int transactionId) {
+//        // Tên cột cho bảng
+//        String[] columnNames = {"Sản phẩm", "Số lượng", "Đơn giá", "Giảm hạng", "Giảm voucher", "Thành tiền"};
+//        DefaultTableModel model = new DefaultTableModel(null, columnNames);
+//        long rawTotal = 0;
+//        long tierDiscount = 0;
+//        long voucherDiscount = 0;
+//        String txSql = "SELECT raw_total, tier_discount, voucher_discount FROM transactions WHERE id = ?";
+//        try (Connection conn = connect();
+//             PreparedStatement ps = conn.prepareStatement(txSql)) {
+//
+//            ps.setInt(1, transactionId);
+//            ResultSet rsTx = ps.executeQuery();
+//            if (rsTx.next()) {
+//                rawTotal = rsTx.getLong("raw_total");
+//                tierDiscount = rsTx.getLong("tier_discount");
+//                voucherDiscount = rsTx.getLong("voucher_discount");
+//            }
+//        } catch (SQLException e) {
+//            e.printStackTrace();
+//        }
+//
+//        String sql = "SELECT product_name, quantity, unit_price, total_price FROM transaction_items WHERE transaction_id = ?";
+//
+//        java.util.List<Object[]> rows = new java.util.ArrayList<>();
+//
+//        try (Connection conn = connect();
+//             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+//
+//            pstmt.setInt(1, transactionId);
+//            ResultSet rs = pstmt.executeQuery();
+//
+//            while (rs.next()) {
+//                String name = rs.getString("product_name");
+//                int qty = rs.getInt("quantity");
+//                long price = rs.getLong("unit_price");
+//                long total = rs.getLong("total_price");
+//
+//                rows.add(new Object[]{name, qty, price, total});
+//            }
+//
+//        } catch (SQLException e) {
+//            e.printStackTrace();
+//        }
+//
+//// ===== PHÂN BỔ GIẢM GIÁ THEO TỶ LỆ =====
+//        long usedTier = 0;
+//        long usedVoucher = 0;
+//
+//        for (int i = 0; i < rows.size(); i++) {
+//
+//            String name = (String) rows.get(i)[0];
+//            int qty = (int) rows.get(i)[1];
+//            long price = (long) rows.get(i)[2];
+//            long total = (long) rows.get(i)[3];
+//
+//            long tierPart = 0;
+//            long voucherPart = 0;
+//
+//            if (rawTotal > 0) {
+//                if (i == rows.size() - 1) {
+//                    // DÒNG CUỐI: bù sai số làm tròn để tổng đúng tuyệt đối
+//                    tierPart = tierDiscount - usedTier;
+//                    voucherPart = voucherDiscount - usedVoucher;
+//                } else {
+//                    double ratio = (double) total / (double) rawTotal;
+//                    tierPart = Math.round(tierDiscount * ratio);
+//                    voucherPart = Math.round(voucherDiscount * ratio);
+//                }
+//            }
+//
+//            usedTier += tierPart;
+//            usedVoucher += voucherPart;
+//
+//            String priceStr = String.format("%,d VNĐ", price);
+//            String totalStr = String.format("%,d VNĐ", total);
+//            String tierStr = String.format("%,d VNĐ", tierPart);
+//            String voucherStr = String.format("%,d VNĐ", voucherPart);
+//
+//            // ✅ PHẢI ADD ĐỦ 6 CỘT
+//            model.addRow(new Object[]{name, qty, priceStr, totalStr, tierStr, voucherStr});
+//        }
+//
+//        return model;
+//    }
 
-        String sql = "SELECT product_name, quantity, unit_price, total_price FROM transaction_items WHERE transaction_id = ?";
+public static DefaultTableModel getTransactionDetails(int transactionId) {
 
-        try (Connection conn = connect();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+    String[] columnNames = {"Sản phẩm", "Số lượng", "Đơn giá", "Giảm hạng", "Giảm voucher", "Thành tiền"};
+    DefaultTableModel model = new DefaultTableModel(null, columnNames);
 
-            pstmt.setInt(1, transactionId);
-            ResultSet rs = pstmt.executeQuery();
+    // 1) Lấy tổng đơn + giảm giá từ transactions
+    String sqlTx = "SELECT raw_total, tier_discount, voucher_discount FROM transactions WHERE id = ?";
+    long rawTotal = 0, tierDiscount = 0, voucherDiscount = 0;
 
-            while (rs.next()) {
-                String name = rs.getString("product_name");
-                int qty = rs.getInt("quantity");
-                long price = rs.getLong("unit_price");
-                long total = rs.getLong("total_price");
+    // 2) Lấy danh sách item
+    String sqlItems = "SELECT product_name, quantity, unit_price, total_price FROM transaction_items WHERE transaction_id = ?";
 
-                // Format tiền tệ cho đẹp
-                String priceStr = String.format("%,d VNĐ", price);
-                String totalStr = String.format("%,d VNĐ", total);
+    try (Connection conn = connect()) {
 
-                model.addRow(new Object[]{name, qty, priceStr, totalStr});
+        // --- Query transactions ---
+        try (PreparedStatement ps = conn.prepareStatement(sqlTx)) {
+            ps.setInt(1, transactionId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    rawTotal = rs.getLong("raw_total");
+                    tierDiscount = rs.getLong("tier_discount");
+                    voucherDiscount = rs.getLong("voucher_discount");
+                }
             }
-        } catch (SQLException e) {
+        }
+
+        // Nếu rawTotal = 0 thì fallback tránh chia 0
+        if (rawTotal <= 0) rawTotal = 1;
+
+        long afterTierTotal = rawTotal - tierDiscount;
+        if (afterTierTotal <= 0) afterTierTotal = 1;
+
+        // Để xử lý làm tròn cho khớp tổng giảm giá
+        java.util.List<Object[]> rows = new java.util.ArrayList<>();
+        long tierAllocatedSum = 0;
+        long voucherAllocatedSum = 0;
+
+        // --- Query items ---
+        try (PreparedStatement ps = conn.prepareStatement(sqlItems)) {
+            ps.setInt(1, transactionId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String name = rs.getString("product_name");
+                    int qty = rs.getInt("quantity");
+                    long unit = rs.getLong("unit_price");
+                    long itemTotal = rs.getLong("total_price"); // gốc
+
+                    // A) phân bổ giảm hạng theo tỉ lệ trên rawTotal
+                    long itemTier = Math.round((double)itemTotal * tierDiscount / rawTotal);
+                    tierAllocatedSum += itemTier;
+
+                    // B) voucher giảm sau khi đã giảm hạng
+                    long itemAfterTier = itemTotal - itemTier;
+                    long itemVoucher = Math.round((double)itemAfterTier * voucherDiscount / afterTierTotal);
+                    voucherAllocatedSum += itemVoucher;
+
+                    long finalLine = itemTotal - itemTier - itemVoucher;
+
+                    rows.add(new Object[]{
+                            name,
+                            qty,
+                            String.format("%,d VNĐ", unit),
+                            String.format("%,d VNĐ", itemTier),
+                            String.format("%,d VNĐ", itemVoucher),
+                            String.format("%,d VNĐ", finalLine)
+                    });
+                }
+            }
+        }
+
+        // --- Fix sai số do làm tròn: dồn phần chênh vào dòng cuối ---
+        if (!rows.isEmpty()) {
+            long tierDiff = tierDiscount - tierAllocatedSum;
+            long voucherDiff = voucherDiscount - voucherAllocatedSum;
+
+            Object[] last = rows.get(rows.size() - 1);
+
+            // last[3] = giảm hạng, last[4] = giảm voucher, last[5] = thành tiền
+            long lastTier = parseVnd(last[3].toString());
+            long lastVoucher = parseVnd(last[4].toString());
+            long lastFinal = parseVnd(last[5].toString());
+
+            lastTier += tierDiff;
+            lastVoucher += voucherDiff;
+            lastFinal = lastFinal - tierDiff - voucherDiff;
+
+            last[3] = String.format("%,d VNĐ", lastTier);
+            last[4] = String.format("%,d VNĐ", lastVoucher);
+            last[5] = String.format("%,d VNĐ", lastFinal);
+        }
+
+        // add vào model
+        for (Object[] r : rows) model.addRow(r);
+
+    } catch (SQLException e) {
+        e.printStackTrace();
+    }
+
+    return model;
+}
+
+    // helper: đổi "20,000 VNĐ" -> 20000
+    private static long parseVnd(String s) {
+        return Long.parseLong(s.replace("VNĐ", "").replace(",", "").trim());
+    }
+
+    // ================== AUTO MIGRATION ==================
+    public static void migrateDatabase() {
+        try (Connection conn = connect()) {
+            if (conn == null) {
+                System.out.println("Không kết nối được DB để migrate!");
+                return;
+            }
+
+            // 1) Đảm bảo bảng tồn tại trước
+            createNewTable();
+            createTransactionTable();
+            createTransactionItemTable();
+
+            // 2) Migrate bảng transactions (nếu bảng cũ)
+            migrateTransactionsTable(conn);
+
+            System.out.println("✅ Migrate database xong!");
+        } catch (Exception e) {
+            System.out.println("❌ Lỗi migrateDatabase: " + e.getMessage());
             e.printStackTrace();
         }
-        return model;
+    }
+
+    private static void migrateTransactionsTable(Connection conn) throws SQLException {
+        // Nếu bảng chưa tồn tại thì createTransactionTable() đã tạo rồi -> khỏi migrate
+        if (!tableExists(conn, "transactions")) return;
+
+        // A) Thêm cột nếu thiếu
+        addColumnIfNotExists(conn, "transactions", "raw_total",
+                "ALTER TABLE transactions ADD COLUMN raw_total BIGINT NOT NULL DEFAULT 0");
+
+        addColumnIfNotExists(conn, "transactions", "tier_discount",
+                "ALTER TABLE transactions ADD COLUMN tier_discount BIGINT NOT NULL DEFAULT 0");
+
+        addColumnIfNotExists(conn, "transactions", "voucher_discount",
+                "ALTER TABLE transactions ADD COLUMN voucher_discount BIGINT NOT NULL DEFAULT 0");
+
+        // B) Ép kiểu BIGINT NOT NULL cho các cột quan trọng (an toàn chạy lại)
+        runSQL(conn, "ALTER TABLE transactions MODIFY balance_before BIGINT NOT NULL");
+        runSQL(conn, "ALTER TABLE transactions MODIFY balance_after  BIGINT NOT NULL");
+        runSQL(conn, "ALTER TABLE transactions MODIFY delta          BIGINT NOT NULL");
+    }
+
+    // ===== Helper functions =====
+    private static boolean tableExists(Connection conn, String tableName) throws SQLException {
+        java.sql.DatabaseMetaData meta = conn.getMetaData();
+        try (ResultSet rs = meta.getTables(null, null, tableName, new String[]{"TABLE"})) {
+            return rs.next();
+        }
+    }
+
+    private static boolean columnExists(Connection conn, String tableName, String columnName) throws SQLException {
+        java.sql.DatabaseMetaData meta = conn.getMetaData();
+        try (ResultSet rs = meta.getColumns(null, null, tableName, columnName)) {
+            return rs.next();
+        }
+    }
+
+    private static void addColumnIfNotExists(Connection conn, String tableName, String columnName, String alterSql)
+            throws SQLException {
+        if (!columnExists(conn, tableName, columnName)) {
+            runSQL(conn, alterSql);
+            System.out.println("✅ Added column " + tableName + "." + columnName);
+        } else {
+            System.out.println("ℹ Column exists " + tableName + "." + columnName);
+        }
+    }
+
+    private static void runSQL(Connection conn, String sql) throws SQLException {
+        try (Statement st = conn.createStatement()) {
+            st.execute(sql);
+        }
     }
 
 }
