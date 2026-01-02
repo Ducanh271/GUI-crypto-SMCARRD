@@ -50,6 +50,9 @@ public class MembershipCardGUI extends JFrame {
     private boolean isConnected = false;
     private boolean isCardBlocked = false; // 🔒 trạng thái thẻ bị khóa
 
+    private int currentMemberId = -1; //ID này để xem chi tiết bảng đã mua (hóa đơn)
+
+
     private Card card = null;
     private CardChannel channel = null;
     private static int counter = 1;
@@ -290,7 +293,9 @@ public class MembershipCardGUI extends JFrame {
 
     // ================== CONSTRUCTOR – GIAO DIỆN NGOÀI ==================
     public MembershipCardGUI() {
-        Database.createNewTable();
+        Database.createNewTable(); //bảng thành viên
+        Database.createTransactionTable();      // transactions
+        Database.createTransactionItemTable();  // chi tiết đơn hàng
         frame = new JFrame("Hệ Thống Quản Lý Thẻ Thành Viên");
         frame.setSize(1200, 700);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -783,6 +788,10 @@ public class MembershipCardGUI extends JFrame {
             int realLen = idBytes.length;
             while(realLen > 0 && idBytes[realLen-1] == 0) realLen--;
             String cardCode = new String(idBytes, 0, realLen, StandardCharsets.UTF_8); // Ví dụ: "CT00005"
+
+            //đoạn này gắn currentMemberId để dùng cho các chức năng sau này
+            currentMemberId = Integer.parseInt(cardCode.substring(2));
+            System.out.println("Current member ID = " + currentMemberId);
 
             // 2. Chuyển đổi CardCode sang ID Database (CT00005 -> 5)
             int dbId;
@@ -1896,6 +1905,15 @@ public class MembershipCardGUI extends JFrame {
         return Long.parseLong(s);
     }
 
+    private long calculateFinalPrice(List<CartItem> cart) {
+        long sum = 0;
+        for (CartItem item : cart) {
+            sum += item.product.price * item.quantity;
+        }
+        return sum;
+    }
+
+
     private void setBalanceToCard(long value) throws CardException {
         setBalanceToCard(value, 0x02);
     }
@@ -2267,14 +2285,49 @@ public class MembershipCardGUI extends JFrame {
         }
 
         try {
-            if (!verifyPin()) {
-                return;
-            } else {
-                handlePurchase(cart);
+            if (!verifyPin()) return;
+            int logIndex = 0; // log mới nhất trên thẻ
+
+            // 1) Số dư trước khi mua
+            long before = getBalanceFromCard();
+
+            // 2) Tổng tiền đơn hàng
+            long finalPrice = calculateFinalPrice(cart);
+
+            // 3) Trừ tiền trên thẻ
+            handlePurchase(cart);
+
+            // 4) Số dư sau khi mua
+            long after = getBalanceFromCard();
+
+            // 5) Lưu transaction chính
+            int transactionId = Database.insertTransaction(
+                    currentMemberId,
+                    logIndex,          // ⭐ THÊM THAM SỐ NÀY
+                    before,
+                    after,
+                    -finalPrice
+            );
+
+            // 6) Lưu chi tiết từng sản phẩm
+            for (CartItem item : cart) {
+                Database.insertTransactionItem(
+                        transactionId,
+                        item.product.name,
+                        item.quantity,
+                        (int) item.product.price
+                );
             }
-        } catch (CardException ex) {
-            JOptionPane.showMessageDialog(this, "Lỗi thẻ: " + ex.getMessage(), "Lỗi", JOptionPane.ERROR_MESSAGE);
+
+        } catch (CardException | SQLException ex) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Lỗi xử lý giao dịch: " + ex.getMessage(),
+                    "Lỗi",
+                    JOptionPane.ERROR_MESSAGE
+            );
         }
+
     }
 
     private void handlePurchase(List<CartItem> cart) throws CardException {
@@ -3183,7 +3236,8 @@ public class MembershipCardGUI extends JFrame {
             listPanel.setLayout(new BoxLayout(listPanel, BoxLayout.Y_AXIS));
 
             // ===== HEADER CỘT =====
-            JPanel header = new JPanel(new GridLayout(1, 5));
+           // JPanel header = new JPanel(new GridLayout(1, 5));
+            JPanel header = new JPanel(new GridLayout(1, 6)); //thêm 1 cột để ấn nút xem chi tiết
             header.setBackground(PRIMARY_PURPLE);
             header.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
 
@@ -3192,6 +3246,7 @@ public class MembershipCardGUI extends JFrame {
             header.add(createHeaderLabel("Loại giao dịch"));
             header.add(createHeaderLabel("Biến động"));
             header.add(createHeaderLabel("Số dư"));
+            header.add(createHeaderLabel("Chi tiết")); // xem lịch sử bảng giao dịch
 
             listPanel.add(header);
             listPanel.add(Box.createVerticalStrut(6));
@@ -3199,8 +3254,42 @@ public class MembershipCardGUI extends JFrame {
             Color rowColor = new Color(235, 225, 245); // tím nhạt
             SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss dd/MM/yyyy");
 
+//            for (int i = 0; i < deltas.size(); i++) {
+//                JPanel row = new JPanel(new GridLayout(1, 5));
+//                row.setBackground(rowColor);
+//                row.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
+//
+//                JLabel sttLabel = new JLabel(String.valueOf(i + 1));
+//                JLabel timeLabel = new JLabel(sdf.format(new Date(times.get(i) * 1000)));
+//                JLabel typeLabel = new JLabel(types.get(i));
+//                JLabel deltaLabel = new JLabel(formatMoneyDelta(deltas.get(i)));
+//                JLabel balanceLabel = new JLabel(formatMoneyNoSign(balances.get(i)));
+//
+//                // ===== TÔ MÀU BIẾN ĐỘNG =====
+//                if (deltas.get(i) >= 0) {
+//                    deltaLabel.setForeground(SUCCESS_COLOR); // xanh
+//                } else {
+//                    deltaLabel.setForeground(DANGER_COLOR);  // đỏ
+//                }
+//
+//                sttLabel.setHorizontalAlignment(SwingConstants.CENTER);
+//                timeLabel.setHorizontalAlignment(SwingConstants.CENTER);
+//                typeLabel.setHorizontalAlignment(SwingConstants.CENTER);
+//                deltaLabel.setHorizontalAlignment(SwingConstants.CENTER);
+//                balanceLabel.setHorizontalAlignment(SwingConstants.CENTER);
+//
+//                row.add(sttLabel);
+//                row.add(timeLabel);
+//                row.add(typeLabel);
+//                row.add(deltaLabel);
+//                row.add(balanceLabel);
+//
+//                listPanel.add(row);
+//                listPanel.add(Box.createVerticalStrut(6));
+//            }
+
             for (int i = 0; i < deltas.size(); i++) {
-                JPanel row = new JPanel(new GridLayout(1, 5));
+                JPanel row = new JPanel(new GridLayout(1, 6)); // 5 → 6 cột
                 row.setBackground(rowColor);
                 row.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
 
@@ -3223,15 +3312,60 @@ public class MembershipCardGUI extends JFrame {
                 deltaLabel.setHorizontalAlignment(SwingConstants.CENTER);
                 balanceLabel.setHorizontalAlignment(SwingConstants.CENTER);
 
+                // ===== NÚT CHI TIẾT =====
+                JButton detailBtn = new JButton("Chi tiết");
+                detailBtn.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+                detailBtn.setFocusPainted(false);
+
+                boolean hasDetail = "Mua hàng".equals(types.get(i));
+
+                // ===== ADD VÀO ROW =====
                 row.add(sttLabel);
                 row.add(timeLabel);
                 row.add(typeLabel);
                 row.add(deltaLabel);
                 row.add(balanceLabel);
 
+                //Nút CHI TIẾT THÊM Ở ĐÂY ĐỂ KO BỊ LỆCH CỘT BẢNG
+                if (hasDetail) {
+                    detailBtn = new JButton("Chi tiết");
+
+                    // [QUAN TRỌNG] Lấy thời gian của giao dịch tại dòng này (đã đọc từ thẻ ở vòng lặp trước)
+                    final long transactionTime = times.get(i);
+
+                    detailBtn.addActionListener(e -> {
+                        try {
+                            // [SỬA ĐỔI] Thay vì tìm theo logIndex, ta tìm theo thời gian (Timestamp)
+                            // Hàm findTransactionByTime đã có sẵn trong Database.java (Source: 355)
+                            Integer txId = Database.findTransactionByTime(currentMemberId, transactionTime);
+
+                            if (txId == null) {
+                                JOptionPane.showMessageDialog(this,
+                                        "Không tìm thấy dữ liệu đồng bộ trong Database cho giao dịch lúc " +
+                                                new java.text.SimpleDateFormat("HH:mm:ss dd/MM/yyyy").format(new java.util.Date(transactionTime * 1000)),
+                                        "Lỗi dữ liệu",
+                                        JOptionPane.ERROR_MESSAGE);
+                                return;
+                            }
+
+                            // Mở dialog chi tiết với ID vừa tìm được
+                            new TransactionDetailDialog(txId).setVisible(true);
+
+                        } catch (Exception ex) {
+                            ex.printStackTrace();
+                            JOptionPane.showMessageDialog(this, "Lỗi truy vấn: " + ex.getMessage());
+                        }
+                    });
+                    row.add(detailBtn);
+                } else {
+                    row.add(new JLabel("")); // Cột trống nếu không phải là mua hàng
+                }
+               // row.add(detailBtn);
+
                 listPanel.add(row);
                 listPanel.add(Box.createVerticalStrut(6));
             }
+
 
             JScrollPane scroll = new JScrollPane(listPanel);
             scroll.setBorder(null);

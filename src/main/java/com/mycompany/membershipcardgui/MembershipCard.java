@@ -70,6 +70,9 @@ public class MembershipCard extends javax.swing.JFrame {
         //</editor-fold>
         Database.connect();
         Database.createNewTable();
+        //Tạo bảng chi tiết giao dịch và đơn hàng
+        Database.createTransactionTable();      // transactions
+        Database.createTransactionItemTable();  // chi tiết đơn hàng
         /* Create and display the form */
         java.awt.EventQueue.invokeLater(new Runnable() {
             public void run() {
