@@ -33,7 +33,8 @@ public class Database {
                 + "full_name VARCHAR(100) NOT NULL, "
                 + "dob VARCHAR(20), "
                 + "gender VARCHAR(10), "
-                + "phone VARCHAR(20), "
+              //  + "phone VARCHAR(20), "
+                + "phone VARCHAR(64), " // Mở rộng độ dài để lưu số đã mã hóa SHA-256
                 + "card_status VARCHAR(20) DEFAULT 'Active', "
                 + "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
                 + "public_key_modulus TEXT, "   // Cột mới: Lưu RSA Modulus
@@ -63,8 +64,9 @@ public class Database {
             pstmt.setString(1, name);
             pstmt.setString(2, dob);
             pstmt.setString(3, gender);
-            pstmt.setString(4, phone);
-
+           // pstmt.setString(4, phone);
+            // LƯU MÃ BĂM
+            pstmt.setString(4, CryptoUtil.hashPhoneNumber(phone));
             int affectedRows = pstmt.executeUpdate();
 
             if (affectedRows > 0) {
@@ -88,13 +90,22 @@ public class Database {
             pstmt.setInt(1, id);
             ResultSet rs = pstmt.executeQuery();
 
+            //bỏ so sánh phone bản rõ
+//            if (rs.next()) {
+//                String storedPhone = rs.getString("phone");
+//                // So sánh số điện thoại (bỏ khoảng trắng nếu có)
+//                if (storedPhone != null && inputPhone != null) {
+//                    return storedPhone.trim().equals(inputPhone.trim());
+//                }
+//            }
+
             if (rs.next()) {
-                String storedPhone = rs.getString("phone");
-                // So sánh số điện thoại (bỏ khoảng trắng nếu có)
-                if (storedPhone != null && inputPhone != null) {
-                    return storedPhone.trim().equals(inputPhone.trim());
-                }
+                String storedHash = rs.getString("phone");
+                // BĂM INPUT RỒI SO SÁNH
+                String inputHash = CryptoUtil.hashPhoneNumber(inputPhone);
+                return storedHash != null && storedHash.equals(inputHash);
             }
+
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -222,7 +233,10 @@ public class Database {
             ps.setString(1, fullName);
             ps.setString(2, dob);
             ps.setString(3, gender);
-            ps.setString(4, phone);
+            //ps.setString(4, phone);
+
+            // CẬP NHẬT MÃ BĂM MỚI
+            ps.setString(4, CryptoUtil.hashPhoneNumber(phone));
             ps.setInt(5, id);
 
             ps.executeUpdate();

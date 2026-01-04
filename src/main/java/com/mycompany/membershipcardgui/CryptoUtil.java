@@ -61,4 +61,21 @@ public class CryptoUtil {
         cipher.init(Cipher.ENCRYPT_MODE, keySpec);
         return cipher.doFinal(paddedInput);
     }
+
+    //Băm số điện thoại dùng SHA-256 và trả về chuỗi HEX viết hoa
+    public static String hashPhoneNumber(String phone) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(phone.trim().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hash) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) hexString.append('0');
+                hexString.append(hex);
+            }
+            return hexString.toString().toUpperCase();
+        } catch (Exception e) {
+            throw new RuntimeException("Lỗi băm số điện thoại", e);
+        }
+    }
 }
