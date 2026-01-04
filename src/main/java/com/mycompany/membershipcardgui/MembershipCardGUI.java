@@ -3660,6 +3660,9 @@ public class MembershipCardGUI extends JFrame {
         if (isCardBlocked) {
             statusIndicator.setText("● THẺ BỊ KHÓA");
             statusIndicator.setForeground(DANGER_COLOR);
+            // Thẻ bị khóa, ngắt kết nối xong thì kết nối lại ko sáng reset PIN, cần cập nhật lại UI
+            // Thêm dòng này để cập nhật trạng thái các nút bấm (bao gồm RESET PIN)
+            handleCardBlockedUI();
             return;
         }
 
