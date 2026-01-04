@@ -34,7 +34,7 @@ public class Database {
                 + "dob VARCHAR(20), "
                 + "gender VARCHAR(10), "
               //  + "phone VARCHAR(20), "
-                + "phone VARCHAR(64), " // Mở rộng độ dài để lưu số đã mã hóa SHA-256
+                + "phone VARCHAR(255), " // Mở rộng độ dài để lưu số đã mã hóa SHA-256
                 + "card_status VARCHAR(20) DEFAULT 'Active', "
                 + "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
                 + "public_key_modulus TEXT, "   // Cột mới: Lưu RSA Modulus
@@ -640,6 +640,7 @@ public static DefaultTableModel getTransactionDetails(int transactionId) {
             createTransactionItemTable();
 
             // 2) Migrate bảng transactions (nếu bảng cũ)
+            migrateMembersTable(conn);
             migrateTransactionsTable(conn);
 
             System.out.println("✅ Migrate database xong!");
@@ -698,6 +699,14 @@ public static DefaultTableModel getTransactionDetails(int transactionId) {
         try (Statement st = conn.createStatement()) {
             st.execute(sql);
         }
+    }
+
+    private static void migrateMembersTable(Connection conn) throws SQLException {
+        if (!tableExists(conn, "members")) return;
+
+        System.out.println("ℹ Đang kiểm tra và nâng cấp cột phone...");
+        // Câu lệnh này sẽ thay đổi độ dài cột phone lên 255 ký tự mà không làm mất dữ liệu cũ
+        runSQL(conn, "ALTER TABLE members MODIFY COLUMN phone VARCHAR(255)");
     }
 
 }

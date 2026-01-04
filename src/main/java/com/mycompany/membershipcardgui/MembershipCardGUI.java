@@ -2010,8 +2010,6 @@ public class MembershipCardGUI extends JFrame {
                             "Cập nhật thành công!",
                             "Thành công",
                             JOptionPane.INFORMATION_MESSAGE);
-
-                    readCard(); // đọc lại để cập nhật UI
                     return;
                 }
                 else {
@@ -2993,9 +2991,38 @@ public class MembershipCardGUI extends JFrame {
             while(realLen > 0 && idBytes[realLen-1] == 0) realLen--;
             String cardCode = new String(idBytes, 0, realLen, StandardCharsets.UTF_8);
 
-            // --- 2. NHẬP SỐ ĐIỆN THOẠI XÁC THỰC ---
-            String inputPhone = JOptionPane.showInputDialog("Nhập số điện thoại đăng ký cho mã thẻ " + cardCode + ":");
-            if (inputPhone == null || inputPhone.trim().isEmpty()) return;
+            // --- 2. NHẬP SỐ ĐIỆN THOẠI XÁC THỰC (ĐÃ VALIDATE) ---
+            JTextField phoneInput = new JTextField();
+            phoneInput.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+
+// Chặn nhập chữ và giới hạn 10 số ngay khi gõ
+            phoneInput.addKeyListener(new KeyAdapter() {
+                @Override
+                public void keyTyped(KeyEvent e) {
+                    char c = e.getKeyChar();
+                    if (!Character.isDigit(c) || phoneInput.getText().length() >= 10) {
+                        e.consume(); // Hủy ký tự nếu không phải số hoặc đã đủ 10 số
+                    }
+                }
+            });
+
+            JPanel panel = new JPanel(new BorderLayout(5, 8));
+            panel.add(new JLabel("Nhập số điện thoại đăng ký cho mã thẻ " + cardCode + ":"), BorderLayout.NORTH);
+            panel.add(phoneInput, BorderLayout.CENTER);
+
+            int result = JOptionPane.showConfirmDialog(null, panel, "Xác thực Reset PIN",
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+
+            if (result != JOptionPane.OK_OPTION) return;
+
+            String inputPhone = phoneInput.getText().trim();
+
+// Kiểm tra định dạng sau khi bấm OK (dùng hàm isValidPhoneVN đã có của bạn)
+            if (!isValidPhoneVN(inputPhone)) {
+                JOptionPane.showMessageDialog(null, "Số điện thoại không hợp lệ (phải đủ 10 số và bắt đầu bằng số 0)!",
+                        "Lỗi định dạng", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
 
             // --- 3. KIỂM TRA DATABASE (MỚI) ---
             int dbId = -1;
@@ -3626,7 +3653,7 @@ public class MembershipCardGUI extends JFrame {
 
     private void handleCardBlockedUI() {
 
-        responseField.setText("🔒 Thẻ đang bị khóa (PIN bị block)");
+        responseField.setText("Thẻ đang bị khóa (PIN bị block)!");
 
         // Disable toàn bộ chức năng
         readCardButton.setEnabled(false);
